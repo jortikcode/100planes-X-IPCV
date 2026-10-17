@@ -1,1 +1,8 @@
 CLAUDE.md
+*.pt
+data/
+cache/
+results
+results/*
+code
+code/*
