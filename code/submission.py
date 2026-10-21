@@ -52,6 +52,7 @@
 # | **depth x residual** | {plain, residual} x {11, 19, 31 convolutional layers}, three seeds each | do skip connections matter, and more so as depth grows? |
 # | **training recipe** | the three best networks + weight decay, label smoothing, dropout, random erasing, crop size and schedule, tuned by grid search, random search and confirmation with three seeds | which network is best once each one has its own tuned recipe? |
 # | **longer training** | the three tuned networks, same configuration, 150 epochs instead of 70 (three seeds) | does more training help, and which network is final? |
+# | **ablation** | the final network with one component removed at a time and retrained (three seeds) | does every component of the final model contribute to its accuracy? |
 #
 # **Protocol.** All runs share the same budget: 224x224 images, 70 epochs, batch 64, SGD with momentum, 3 warmup
 # epochs followed by cosine decay. Each configuration is trained at three learning rates (0.1, 0.05, 0.01) and
@@ -1505,6 +1506,213 @@ if names and len(long_final) == len(names):
         curves[f"{n} | {BASE['epochs']} ep"] = best_tuned(n)[1][0]
         curves[f"{n} | {LONG_EPOCHS} ep"] = long_final[n][0]
     plot_curves(curves, f"tuned networks: {BASE['epochs']} vs {LONG_EPOCHS} epochs (seed 42)")
+
+# %% [markdown]
+# ## Ablation of the final model
+#
+# The ladder and the depth x residual experiment *added* components one at a time to a plain network. To prove that every
+# design choice of the **final model** contributes to its accuracy, we now do the converse: starting from the final
+# network with its final configuration (150 epochs), we **remove one component at a time**, retrain, and compare with the
+# full model. Every ablation uses the same three seeds and changes exactly one thing; learning rate, epochs and all the
+# other settings stay those of the final model.
+#
+# | ablation | what changes | component tested |
+# |---|---|---|
+# | `no_batchnorm` | BatchNorm removed (convolutions get a bias back) | architecture |
+# | `no_gap` | flatten + linear head instead of global average pooling | architecture |
+# | `no_residual` | skip connections removed (plain network) | architecture |
+# | `no_stage4` | the 512-channel stage removed | architecture |
+# | `shallow` | one block per stage instead of the final layout | architecture |
+# | `no_augmentation` | no random resized crop and no horizontal flip | training recipe |
+# | `no_erasing` | no random erasing | training recipe |
+# | `no_label_smoothing` | plain cross-entropy | training recipe |
+# | `no_weight_decay` | weight decay 0 | training recipe |
+# | `cosine` | cosine schedule with warmup instead of one-cycle | training recipe |
+# | `no_batchnorm_lr0.01`, `no_gap_lr0.01` | the same removals at a learning rate of 0.01 | control |
+#
+# **Control.** In the ladder, networks without BatchNorm or with the flatten head were unstable at the high learning
+# rates that the final model uses. A removal could then look harmful only because the learning rate does not suit it, as
+# in the learning-rate sweep of the ladder: for these two components we also train the removal at lr 0.01, and report
+# both.
+#
+# **Reading the table.** `Δ val` is the validation accuracy of the ablated network minus that of the full model; a
+# component is useful if removing it lowers the accuracy by more than the seed noise (`beyond noise`: the drop exceeds
+# the larger standard deviation of the two). The train accuracy tells *how* a component helps: removing a regularizer
+# raises the train-validation gap, removing capacity or an optimization aid lowers the train accuracy itself.
+
+# %%
+# The final model (selected above) and its ablations: each one changes exactly one component of its configuration
+FINAL_NET = globals().get("final")
+ABLATION_GROUP = "ablation"
+ABLATION_LR_CONTROL = 0.01          # lr of the control runs for the components that make training unstable
+
+
+def make_ablations(base):
+    # {name: (kind, overrides)} on top of the configuration `base` of the final model; removals that would not
+    # change `base` (e.g. no_residual on a plain network) are left out.
+    channels, blocks = tuple(base["channels"]), tuple(base["blocks"])
+    candidates = {
+        "no_batchnorm":       ("architecture", dict(batchnorm=False)),
+        "no_gap":             ("architecture", dict(gap=False)),
+        "no_residual":        ("architecture", dict(residual=False)),
+        "no_stage4":          ("architecture", dict(channels=channels[:3], blocks=blocks[:3])),
+        "shallow":            ("architecture", dict(blocks=(1,) * len(blocks))),
+        "no_augmentation":    ("recipe", dict(augment=False)),
+        "no_erasing":         ("recipe", dict(random_erasing=0.0)),
+        "no_label_smoothing": ("recipe", dict(label_smoothing=0.0)),
+        "no_weight_decay":    ("recipe", dict(weight_decay=0.0)),
+        "cosine":             ("recipe", dict(schedule="cosine")),
+        "no_batchnorm_lr0.01": ("control", dict(batchnorm=False, lr=ABLATION_LR_CONTROL)),
+        "no_gap_lr0.01":       ("control", dict(gap=False, lr=ABLATION_LR_CONTROL)),
+    }
+    same = lambda a, b: json.dumps(a) == json.dumps(b)      # tuples and lists compare equal
+    return {n: (kind, over) for n, (kind, over) in candidates.items()
+            if any(not same(base.get(k), v) for k, v in over.items())}
+
+
+if FINAL_NET is None or not long_runs(FINAL_NET):
+    ABLATION_BASE, ABLATIONS = None, {}
+    print("the final model is not available yet: train the longer runs first")
+else:
+    ABLATION_BASE = run_overrides(long_runs(FINAL_NET)[0])
+    ABLATIONS = make_ablations(ABLATION_BASE)
+    print(f"final model: {FINAL_NET}, {ABLATION_BASE['epochs']} epochs, lr {ABLATION_BASE['lr']:g}")
+    for name, (kind, over) in ABLATIONS.items():
+        print(f"{name:22s} {kind:13s} {over}")
+
+# %%
+# [run]
+for name, (kind, over) in ABLATIONS.items():
+    for seed in SEEDS:
+        run_experiment(f"{name}_s{seed}", ABLATION_GROUP, note=f"ablation: {name}",
+                       **{**ABLATION_BASE, **over, "seed": seed})
+
+# %% [markdown]
+# ### Results of the ablation
+#
+# Mean ± standard deviation over three seeds, each ablated network against the full model (the longer training of the
+# final network, same seeds). Runs that diverged before the first validation have no checkpoint and are left out of the
+# means (`diverged` counts them).
+
+# %%
+def ablation_table():
+    # One row per configuration: full model first, then the ablations; None until at least one run exists.
+    runs = load_group(ABLATION_GROUP)
+    groups = {"full model": ("", {}, long_runs(FINAL_NET))}
+    for name, (kind, over) in ABLATIONS.items():
+        got = [runs[f"{name}_s{s}"] for s in SEEDS if f"{name}_s{s}" in runs]
+        if got:
+            groups[name] = (kind, over, got)
+    if len(groups) == 1:
+        return None
+
+    def stats(rs, key):
+        v = np.array([r[key] for r in rs if r["best_epoch"] > 0], dtype=float)
+        return (v.mean(), v.std(ddof=1) if len(v) > 1 else np.nan) if len(v) else (np.nan, np.nan)
+
+    ref_val, ref_test = stats(groups["full model"][2], "best_val_acc"), stats(groups["full model"][2], "test_acc")
+    rows = []
+    for name, (kind, over, rs) in groups.items():
+        val, test = stats(rs, "best_val_acc"), stats(rs, "test_acc")
+        train, gap = stats(rs, "final_train_acc")[0], np.nanmean([r["final_train_acc"] - r["final_val_acc"] for r in rs])
+        noise = np.nanmax([val[1], ref_val[1]])
+        rows.append(dict(
+            run=name, kind=kind, change=", ".join(f"{k}={v}" for k, v in over.items()), lr=rs[0]["config"]["lr"],
+            params_M=rs[0]["params"] / 1e6, seeds=len(rs), diverged=f"{sum(r['diverged'] for r in rs)}/{len(rs)}",
+            val_mean=val[0], val_std=val[1], d_val=val[0] - ref_val[0],
+            test_mean=test[0], test_std=test[1], d_test=test[0] - ref_test[0],
+            train=train, gap=gap,
+            beyond_noise=("" if name == "full model" else "yes" if ref_val[0] - val[0] > noise else "no")))
+    return pd.DataFrame(rows).set_index("run")
+
+
+def style_ablation(table):
+    return (table.rename(columns={"d_val": "Δ val", "d_test": "Δ test", "val_mean": "val", "val_std": "± val",
+                                  "test_mean": "test", "test_std": "± test", "train": "train acc", "gap": "train-val gap",
+                                  "params_M": "params (M)", "beyond_noise": "beyond noise"})
+            .style.format({"lr": "{:g}", "params (M)": "{:.2f}", "val": "{:.3f}", "± val": "{:.3f}", "Δ val": "{:+.3f}",
+                           "test": "{:.3f}", "± test": "{:.3f}", "Δ test": "{:+.3f}", "train acc": "{:.3f}",
+                           "train-val gap": "{:+.3f}"}, na_rep="-")
+            .background_gradient(subset=["Δ val", "Δ test"], cmap="RdYlGn", vmin=-0.4, vmax=0.4)
+            .set_properties(subset=pd.IndexSlice["full model", :], **{"font-weight": "bold"}))
+
+
+ablation = ablation_table() if FINAL_NET is not None and long_runs(FINAL_NET) else None
+if ablation is None:
+    print("no ablation run yet: run the cell above")
+else:
+    display(style_ablation(ablation))
+
+# %% [markdown]
+# The two plots below show the same table. **Left**: the change in validation (dark bars) and test (light bars) accuracy
+# caused by each removal, with the standard deviation over seeds (the grey band is the seed noise of the full model); components are ordered by how much their removal costs.
+# **Right**: where each network ends up in the training accuracy / validation accuracy plane. A network far below the
+# dashed diagonal overfits. Removing capacity or an optimization aid moves a network to the left (it fits its training
+# set worse); removing a regularizer moves it to the right and down (it fits better and generalizes worse).
+
+# %%
+if ablation is not None:
+    full = ablation.loc["full model"]
+    abl = ablation.drop(index="full model").sort_values("d_val", ascending=True)       # the most costly removal on top
+    kind_color = {"architecture": COLORS[0], "recipe": COLORS[1], "control": COLORS[2]}
+    ys = np.arange(len(abl))
+
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(17, 0.55 * len(abl) + 3.2), gridspec_kw=dict(width_ratios=[1.35, 1]))
+    ax.axvspan(-full.val_std, full.val_std, color="gray", alpha=0.18)
+    ax.barh(ys - 0.2, abl.d_val, 0.38, xerr=abl.val_std.fillna(0), color=[kind_color[k] for k in abl.kind],
+            error_kw=dict(lw=1.2, capsize=3))
+    ax.barh(ys + 0.2, abl.d_test, 0.38, xerr=abl.test_std.fillna(0), color=[kind_color[k] for k in abl.kind],
+            alpha=0.45, error_kw=dict(lw=1.2, capsize=3))
+    right = max(0.02, np.nanmax(abl.d_val) + 0.02)
+    for y, d, t in zip(ys, abl.d_val, abl.d_test):
+        ax.text(right, y, f"val {d:+.3f}\ntest {t:+.3f}", va="center", ha="left", fontsize=8)
+    ax.set_xlim(None, right)
+    ax.set_yticks(ys, abl.index); ax.invert_yaxis(); ax.axvline(0, color="black", lw=1)
+    ax.set_xlabel("accuracy change when the component is removed")
+    ax.set_title(f"ablation of {FINAL_NET}: full model val {full.val_mean:.3f}, test {full.test_mean:.3f}")
+    handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in kind_color.values()]
+    band = plt.Rectangle((0, 0), 1, 1, color="gray", alpha=0.18)
+    ax.legend(handles + [band], list(kind_color) + ["seed noise of the full model"], loc="upper center",
+              bbox_to_anchor=(0.5, -0.1), ncol=4, fontsize=8, frameon=False)
+
+    lim = [np.nanmin(ablation.val_mean) - 0.03, 1.0]
+    ax2.plot([0, 1], [0, 1], "--", color="gray", lw=1)
+    for name, row in ablation.iterrows():
+        c = "black" if name == "full model" else kind_color[row.kind]
+        ax2.scatter(row.train, row.val_mean, color=c, s=70, zorder=3)
+        ax2.annotate(name, (row.train, row.val_mean), textcoords="offset points", xytext=(6, 4), fontsize=8)
+    ax2.set_xlim(max(np.nanmin(ablation.train) - 0.05, 0), 1.0); ax2.set_ylim(*lim)
+    ax2.set_xlabel("final training accuracy"); ax2.set_ylabel("best validation accuracy")
+    ax2.set_title("fit vs generalization (dashed: train = val)")
+    plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# Training curves of every ablation (seed 42) against the full model: validation accuracy (solid) and training accuracy
+# (dashed).
+
+# %%
+if ablation is not None:
+    runs = load_group(ABLATION_GROUP)
+    names = [n for n in ablation.index if n != "full model"]
+    reference = long_runs(FINAL_NET)[0]
+    cols = 4
+    rows_ = int(np.ceil(len(names) / cols))
+    fig, axes = plt.subplots(rows_, cols, figsize=(4.6 * cols, 3.4 * rows_), sharey=True, squeeze=False)
+    for ax, name in zip(axes.ravel(), names):
+        r = runs[f"{name}_s{SEEDS[0]}"] if f"{name}_s{SEEDS[0]}" in runs else None
+        for label, run, color in (("full model", reference, COLORS[0]), (name, r, COLORS[1])):
+            if run is None or not run["history"]["val_acc"]:
+                continue
+            h = run["history"]
+            ep = range(1, len(h["val_acc"]) + 1)
+            ax.plot(ep, h["val_acc"], color=color, label=label)
+            ax.plot(ep, h["train_acc"], color=color, ls="--", lw=1.3)
+        ax.set_title(name, fontsize=10); ax.set_xlabel("epoch"); ax.legend(fontsize=7, loc="lower right")
+    for ax in axes.ravel()[len(names):]:
+        ax.axis("off")
+    axes[0, 0].set_ylabel("accuracy")
+    fig.suptitle("validation (solid) and training (dashed) accuracy: full model vs ablation, seed 42")
+    plt.tight_layout(); plt.show()
 
 # %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
