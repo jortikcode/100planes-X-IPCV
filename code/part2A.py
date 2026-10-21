@@ -27,7 +27,7 @@
 #
 # We fine-tune the ResNet-18 of PyTorch, pretrained on ImageNet-1K (V1), on the 100 aircraft variants of
 # FGVC-Aircraft. As the assignment requires for 2A, we train it with **exactly the training hyperparameters of the
-# best model of Part 1** (`res_2222`, the residual network with the stage layout of ResNet-18), and nothing else
+# best model of Part 1** (`res_3461`, the residual network with 31 convolutional layers), and nothing else
 # is tuned.
 #
 # | hyperparameter | value (Part 1, best model) |
@@ -186,7 +186,7 @@ fix_random(42)
 # ## Configuration
 #
 # `BASE` holds the fixed choices of Part 1; `PART1_BEST` are the overrides that turn it into the best model of Part 1
-# (`res_2222`, configuration `cfg05`). The architecture keys of Part 1 (`channels`, `blocks`, `batchnorm`, ...) do not
+# (`res_3461`, configuration `cfg05`). The architecture keys of Part 1 (`channels`, `blocks`, `batchnorm`, ...) do not
 # apply here: the network is the pretrained ResNet-18.
 
 # %%
@@ -209,7 +209,7 @@ BASE = dict(
     warmup_epochs=3,
 )
 
-# The training hyperparameters of the best model of Part 1 (res_2222 with its tuned recipe, see part1_ladder)
+# The training hyperparameters of the best model of Part 1 (res_3461 with its tuned recipe, see part1_ladder)
 PART1_BEST = dict(
     augment=True,
     crop_scale=(0.5, 1.0),
@@ -398,9 +398,9 @@ if data is not None:
 # ## The network
 #
 # The ResNet-18 of PyTorch (`torchvision.models.resnet18`), initialized with the ImageNet-1K V1 weights
-# (`ResNet18_Weights.IMAGENET1K_V1`). It has the same stage layout as our best network of Part 1 (`blocks = (2, 2, 2, 2)`,
-# 64 -> 512 channels, global average pooling), but the stem is the original 7x7 convolution and every weight starts from
-# ImageNet instead of a random initialization. The 1000-way classifier is replaced by a new `Dropout -> Linear(512, 100)`
+# (`ResNet18_Weights.IMAGENET1K_V1`). It is a residual network like our best network of Part 1 (`res_3461`, `blocks = (3, 4, 6, 1)`),
+# with the stage layout of ResNet-18 (`blocks = (2, 2, 2, 2)`, 64 -> 512 channels, global average pooling), the original
+# 7x7 convolution as stem, and every weight starting from ImageNet instead of a random initialization. The 1000-way classifier is replaced by a new `Dropout -> Linear(512, 100)`
 # (dropout is 0 here, as in Part 1), initialized at random. **All layers are fine-tuned**, with a single learning rate:
 # 2A prescribes the hyperparameters of Part 1 and does not ask for anything else.
 
@@ -703,19 +703,19 @@ def plot_curves(runs, title=""):
 # %% [markdown]
 # ### Fine-tuned ResNet-18 vs. the best model of Part 1
 #
-# Mean ± standard deviation over three seeds (`resnet18_ft`: pretrained ResNet-18, `res_2222`: the same
-# stage layout trained from scratch in Part 1, with the same hyperparameters). The curves are the seed-42 runs.
+# Mean ± standard deviation over three seeds (`resnet18_ft`: pretrained ResNet-18, `res_3461`: our best
+# network, trained from scratch in Part 1 with the same hyperparameters). The curves are the seed-42 runs.
 
 # %%
 ft_runs = [r for n, r in sorted(load_group("finetune").items())]
 part1_runs = []
 if PART1_DIR.exists():
     long = load_group("long", PART1_DIR)         # the 150-epoch trainings of Part 1
-    part1_runs = [long[f"res_2222_ep{BASE['epochs']}_s{s}"] for s in SEEDS if f"res_2222_ep{BASE['epochs']}_s{s}" in long]
+    part1_runs = [long[f"res_3461_ep{BASE['epochs']}_s{s}"] for s in SEEDS if f"res_3461_ep{BASE['epochs']}_s{s}" in long]
     if not part1_runs:
         print("WARNING: the 150-epoch runs of Part 1 (results/part1/long) are not available: no reference shown")
 
-groups = {"resnet18_ft (pretrained, 2A)": ft_runs, "res_2222 (from scratch, part 1)": part1_runs}
+groups = {"resnet18_ft (pretrained, 2A)": ft_runs, "res_3461 (from scratch, part 1)": part1_runs}
 groups = {k: v for k, v in groups.items() if v}
 if groups:
     display(seed_summary(groups))
