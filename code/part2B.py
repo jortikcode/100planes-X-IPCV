@@ -78,11 +78,12 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available()
 
 # Mixed precision on CUDA only: bfloat16 where supported (A100, L4), float16 + loss scaling otherwise (T4)
 AMP = DEVICE.type == "cuda"
-AMP_DTYPE = torch.bfloat16 if (AMP and torch.cuda.is_bf16_supported()) else torch.float16
+AMP_DTYPE = torch.bfloat16 if (AMP and torch.cuda.get_device_capability()[0] >= 8) else torch.float16
+torch.set_float32_matmul_precision("high")
 
 RETRAIN = False        # True: retrain runs even if their JSON already exists
 SHOW_SUMMARY = True    # print the model summary when a run starts with a different architecture than the last one
-USE_DRIVE = False      # Colab only: keep results and image cache in Google Drive (False: Colab's temporary disk)
+USE_DRIVE = True      # Colab only: keep results and image cache in Google Drive (False: Colab's temporary disk)
 print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if AMP else "")
       + f" | amp: {AMP_DTYPE if AMP else 'off'} | torch {torch.__version__}")
 
@@ -201,13 +202,13 @@ BASE = dict(
     cutmix_alpha=0.0,
     # architecture & freezing
     dropout=0.0,
-    freeze_epochs=0,                 # epochs with frozen backbone (only fc trained) at the start of training
-    freeze_stages=0,                 # permanently frozen lower stages: 0=none, 1=stem, 2=stem+layer1
+    freeze_epochs=0,
+    freeze_stages=0,
     # optimization & schedule
     epochs=70,
     batch_size=64,
     lr=0.05,
-    layer_decay=1.0,                 # stage-wise LR multiplier: lr_stage = lr * (layer_decay ** (5 - stage_idx))
+    layer_decay=1.0,
     momentum=0.9,
     weight_decay=5e-3,
     label_smoothing=0.2,
@@ -215,7 +216,6 @@ BASE = dict(
     schedule="onecycle",
 )
 
-# Starting recipe (Part 1 / Part 2A hyperparameters, at the 70-epoch study budget)
 START_2B = dict(
     augment=True,
     crop_scale=(0.5, 1.0),
@@ -594,17 +594,19 @@ def train_epoch(model, opt, scaler, criterion, data, cfg, epoch):
 @torch.no_grad()
 def evaluate(model, split, data, cfg, return_preds=False):
     model.eval()
-    total_loss, correct, preds = 0.0, 0, []
+    total_loss = torch.zeros((), device=DEVICE)
+    correct = torch.zeros((), device=DEVICE)
+    preds = []
     for x, y in batches(split, data, cfg, train=False):
         with autocast():
             logits = model(x)
-        total_loss += F.cross_entropy(logits.float(), y, reduction="sum").item()
+        total_loss += F.cross_entropy(logits.float(), y, reduction="sum")
         p = logits.argmax(1)
-        correct += (p == y).sum().item()
+        correct += (p == y).sum()
         if return_preds:
             preds.append(p.cpu())
     n = len(split)
-    out = (total_loss / n, correct / n)
+    out = (total_loss.item() / n, correct.item() / n)
     return out + (torch.cat(preds).tolist(),) if return_preds else out
 
 
