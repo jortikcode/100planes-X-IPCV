@@ -1149,3 +1149,162 @@ if final_groups:
               f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f}")
     plot_curves({label: runs[0] for label, runs in final_groups.items()},
                 "Part 1 (from scratch) vs. Part 2A (untuned FT) vs. Part 2B (tuned FT) — seed 42")
+
+
+# %% [markdown]
+# ## Step 6: longer-training regularization and higher input resolution (`s6_highres`)
+#
+# Inspecting the 150-epoch curves of our Step 5 winner (`final_long`, `224x224`, `random_erasing=0.0`) reveals two
+# bottlenecks that limit the final accuracy to ~76%:
+#
+# 1. **Early training-set saturation at 150 epochs**: in Step 4A, disabling Random Erasing (`random_erasing=0.0`) gave a
+#    slight edge at 70 epochs (`72.7%` vs. `72.3%`) because 10 epochs were spent with the backbone frozen and 60
+#    unfrozen epochs were barely enough to fit the occluded images. However, without Random Erasing, training accuracy
+#    reaches **100.0% already around epoch 50**: during the remaining 100 epochs of a 150-epoch run, the training loss
+#    is flat and gradients vanish. Re-enabling **Random Erasing (`p = 0.25`)** over the 150-epoch schedule prevents
+#    early memorization and forces the network to use multiple aircraft parts (Zhong et al., AAAI 2020).
+# 2. **Spatial bottleneck of the ResNet-18 stem at 224x224**: the standard ImageNet ResNet-18 stem (`7x7` conv with
+#    stride 2 followed by `3x3` max-pooling with stride 2) downsamples the input by $4\times$ before `layer1` and by
+#    $32\times$ at the end of `layer4` (He et al., CVPR 2016). At `224x224`, the last feature map before global average
+#    pooling is only **$7 \times 7$ ($49$ spatial cells)**, which blurs subtle fine-grained cues (window counts, engine
+#    pylons, tail fairings). Because global average pooling is agnostic to spatial dimensions, we can feed **320x320**
+#    images into the exact same pretrained weights: this expands the `layer4` feature map to **$10 \times 10$ ($100$
+#    spatial cells — more than $2\times$ the spatial resolution)**, a standard technique in fine-grained recognition
+#    (Lin et al., *Bilinear CNN*, ICCV 2015; Touvron et al., *Fixing the Train-Test Resolution Discrepancy*, NeurIPS 2019).
+#
+# We test these two factors as a mini-ladder at **150 epochs** (seed 42), starting from the winning recipe of Step 5
+# (`final_long`):
+#
+# | step | configuration change (on top of `final_long` @ 150 epochs) | question |
+# |---|---|---|
+# | **baseline (`2B_ep150`)** | `img_size=224`, `random_erasing=0.0`, `epochs=150` (already trained in Step 5) | reference point at 150 epochs |
+# | **s6a (`+ random_erasing`)** | `img_size=224`, **`random_erasing=0.25`**, `epochs=150` | does random occlusion pay off once the network has 150 epochs to converge? |
+# | **s6b (`+ 320px resolution`)** | **`img_size=320`**, `random_erasing=0.0`, `epochs=150` | does doubling the spatial area of the `layer4` feature map ($7\times 7 \to 10\times 10$) improve fine-grained variant separation? |
+# | **s6c (`combined + 3 seeds`)** | combines the improvements that helped on validation (`img_size=320` + `random_erasing=0.25`, `epochs=150`), confirmed over 3 seeds (`42, 43, 44`) | do higher resolution and occlusion regularization compound, and what is the final test accuracy? |
+
+# %%
+# [run] Step 6 mini-ladder: 1) 150ep + random_erasing=0.25, 2) 150ep + img_size=320, 3) combination + 3 seeds
+long_base_runs = load_group("final_long")
+base_150_run = long_base_runs.get(f"resnet18_2B_ep{LONG_EPOCHS}_s{SEEDS[0]}")
+
+if base_150_run is None:
+    print("Run Step 5 (final_long) first so the 150-epoch baseline is available.")
+else:
+    base_150_cfg = run_overrides(base_150_run)
+    base_val = base_150_run["best_val_acc"]
+    print(f"Baseline 150ep (224px, re=0.0) : val {base_val:.3f} | test {base_150_run['test_acc']:.3f}")
+
+    # 6A: Re-enable Random Erasing (p=0.25) on the 150-epoch schedule at 224x224
+    run_6a = run_experiment(
+        "s6a_224px_re0.25_ep150", "s6_highres",
+        note="step 6A: 150ep + random_erasing=0.25 @ 224px",
+        seed=SEEDS[0], **{**base_150_cfg, "random_erasing": 0.25, "img_size": 224, "epochs": LONG_EPOCHS}
+    )
+
+    # 6B: Increase input resolution to 320x320 (keeping random_erasing=0.0 to isolate resolution)
+    run_6b = run_experiment(
+        "s6b_320px_re0_ep150", "s6_highres",
+        note="step 6B: 150ep + img_size=320 (re=0.0)",
+        seed=SEEDS[0], **{**base_150_cfg, "random_erasing": 0.0, "img_size": 320, "epochs": LONG_EPOCHS}
+    )
+
+    # Check which factors improved validation accuracy over the 150-epoch baseline
+    re_helped = run_6a["best_val_acc"] > base_val
+    res_helped = run_6b["best_val_acc"] > base_val
+    chosen_re = 0.25 if re_helped else 0.0
+    chosen_res = 320 if res_helped else 224
+    print(f"\n==> Factor check on validation (vs. {base_val:.3f}):")
+    print(f"    Random Erasing 0.25 : val {run_6a['best_val_acc']:.3f} ({'helped -> keep 0.25' if re_helped else 'did not beat baseline -> keep 0.0'})")
+    print(f"    Resolution 320x320  : val {run_6b['best_val_acc']:.3f} ({'helped -> keep 320px' if res_helped else 'did not beat baseline -> keep 224px'})")
+
+    # 6C: Always evaluate the combined configuration (320px + random_erasing=0.25) on seed 42 so the full 2x2 ablation
+    # table is complete, then pick the overall best Step 6 configuration on validation and confirm it across 3 seeds.
+    run_6c_comb = run_experiment(
+        "s6c_320px_re0.25_ep150", "s6_highres",
+        note="step 6C: combined 320px + random_erasing=0.25 @ 150ep",
+        seed=SEEDS[0], **{**base_150_cfg, "random_erasing": 0.25, "img_size": 320, "epochs": LONG_EPOCHS}
+    )
+
+    # Select the best configuration strictly by seed-42 validation accuracy and run seeds 43 and 44
+    s6_candidates = {
+        "2B_ep150 (224px, re=0)": base_150_run,
+        "s6a (224px, re=0.25)":   run_6a,
+        "s6b (320px, re=0)":      run_6b,
+        "s6c (320px, re=0.25)":   run_6c_comb,
+    }
+    best_s6_label, best_s6_run = max(s6_candidates.items(), key=lambda item: item[1]["best_val_acc"])
+    best_s6_cfg = run_overrides(best_s6_run)
+    print(f"\n==> Step 6 winner on seed 42: {best_s6_label} ({best_s6_run['name']}) | "
+          f"val {best_s6_run['best_val_acc']:.3f} | test {best_s6_run['test_acc']:.3f}")
+
+    # Confirm the Step 6 winner on all 3 seeds (42, 43, 44) in group "s6_final_seeds"
+    for seed in SEEDS:
+        run_experiment(
+            f"resnet18_2B_best_s{seed}", "s6_final_seeds",
+            note=f"Step 6 winner ({best_s6_label}) confirmed on 3 seeds",
+            seed=seed, **best_s6_cfg
+        )
+
+# %% [markdown]
+# ### Step 6 results: effect of Random Erasing at 150 epochs, 320x320 resolution, and their combination
+#
+# Comparison of the four 150-epoch configurations (2x2 factorial ablation: `{224px, 320px}` x `{re=0.0, re=0.25}` on
+# seed 42), followed by the multi-seed summary (`mean ± std` over seeds 42, 43, 44) across Part 1, Part 2A, and Part 2B.
+
+# %%
+s6_group = load_group("s6_highres")
+if base_150_run is not None and len(s6_group) >= 3:
+    s6_compare = {
+        "2B_ep150 (224px, re=0)": base_150_run,
+        "s6a (224px, re=0.25)":   s6_group["s6a_224px_re0.25_ep150"],
+        "s6b (320px, re=0)":      s6_group["s6b_320px_re0_ep150"],
+        "s6c (320px, re=0.25)":   s6_group["s6c_320px_re0.25_ep150"],
+    }
+    rows_s6 = [dict(
+        run=label,
+        img_size=r["config"]["img_size"],
+        random_erasing=r["config"]["random_erasing"],
+        epochs=r["config"]["epochs"],
+        GFLOPs=r["gflops"],
+        best_val=r["best_val_acc"],
+        best_epoch=r["best_epoch"],
+        final_train=r["final_train_acc"],
+        gap=r["final_train_acc"] - r["final_val_acc"],
+        test=r["test_acc"],
+        minutes=r["minutes"],
+    ) for label, r in s6_compare.items()]
+    display(pd.DataFrame(rows_s6).set_index("run").style.format({
+        "random_erasing": "{:g}", "GFLOPs": "{:.2f}", "best_val": "{:.3f}",
+        "final_train": "{:.3f}", "gap": "{:+.3f}", "test": "{:.3f}", "minutes": "{:.1f}"
+    }))
+
+    # Bar plot of the Step 6 mini-ladder
+    names_s6 = list(s6_compare.keys())
+    xs = np.arange(len(names_s6))
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.bar(xs - 0.2, [s6_compare[n]["best_val_acc"] for n in names_s6], 0.38, label="val (best epoch)", color=COLORS[0])
+    ax.bar(xs + 0.2, [s6_compare[n]["test_acc"] for n in names_s6], 0.38, label="test", color=COLORS[1])
+    for x_, n in zip(xs, names_s6):
+        ax.text(x_ - 0.2, s6_compare[n]["best_val_acc"] + 0.008, f"{s6_compare[n]['best_val_acc']:.3f}", ha="center", fontsize=8)
+        ax.text(x_ + 0.2, s6_compare[n]["test_acc"] + 0.008, f"{s6_compare[n]['test_acc']:.3f}", ha="center", fontsize=8)
+    ax.set_xticks(xs, names_s6, rotation=10)
+    ax.set_ylabel("accuracy")
+    ax.set_ylim(0, 1.0)
+    ax.axhline(0.70, ls="--", c="gray", lw=1, label="70% target")
+    ax.legend()
+    ax.set_title("Step 6 mini-ladder: 150 epochs, Random Erasing and 320x320 resolution (seed 42)")
+    plt.tight_layout(); plt.show()
+
+    plot_curves(s6_compare, "Step 6: 224px vs. 320px and Random Erasing at 150 epochs (seed 42)")
+
+# Multi-seed final summary including the Step 6 winner
+s6_seeds_runs = [load_group("s6_final_seeds")[f"resnet18_2B_best_s{s}"]
+                 for s in SEEDS if f"resnet18_2B_best_s{s}" in load_group("s6_final_seeds")]
+if s6_seeds_runs:
+    all_final_groups = dict(final_groups)
+    win_cfg = s6_seeds_runs[0]["config"]
+    all_final_groups[f"resnet18_2B_s6 ({win_cfg['img_size']}px, re={win_cfg['random_erasing']:g}, 150ep)"] = s6_seeds_runs
+    display(seed_summary(all_final_groups))
+    for label, runs in all_final_groups.items():
+        print(f"{label:55s} val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
+              f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f}")
