@@ -23,36 +23,45 @@
 #
 # Ubalducci Michele (0001226810) michele.ubalducci@studio.unibo.it
 #
+# ### Contents
+#
+# **Setup and code**
+# - [Setup](#setup) — [Paths](#paths), [Reproducibility](#reproducibility)
+# - [Configuration](#configuration)
+# - [Data](#data)
+# - [The network](#the-network)
+# - [Training](#training) — [Sanity checks](#sanity-checks)
+# - [Experiment runner](#experiment-runner)
+#
+# **Experiments**
+# 1. [From a plain VGG to a residual network: a roadmap](#1-from-a-plain-vgg-to-a-residual-network-a-roadmap)
+#    — results, [sensitivity to the learning rate](#sensitivity-to-the-learning-rate)
+# 2. [Depth and residual connections](#2-depth-and-residual-connections)
+# 3. [The training recipe](#3-the-training-recipe) —
+#    [learning rate and weight decay](#step-1--learning-rate-and-weight-decay),
+#    [random search](#step-2--random-search),
+#    [confirmation with seeds](#step-3--confirmation-with-seeds)
+# 4. [Longer training and the final model](#4-longer-training-and-the-final-model)
+# 5. [Error analysis of the final model](#5-error-analysis-of-the-final-model)
+#
+# [Conclusions](#conclusions)
+
+# %% [markdown]
 # We train a convolutional network from scratch on the 100 aircraft variants of FGVC-Aircraft, using only PyTorch
 # primitives (`nn.Conv2d`, `nn.BatchNorm2d`, `nn.Linear`, ...). Our goal is a network in which every component is
 # justified by a measurement, so we build it step by step and let each result motivate the next experiment:
 #
 # ![roadmap](attachment:roadmap.png)
 #
-# *Validation accuracy after each step of the study (generated from the stored results by
-# `figures/make_figures.py`). The
-# architecture steps add one change each; the following rows carry forward the network selected by an experiment
-# or a search (grey dots: the other networks compared). Error bars: standard deviation over three seeds.*
-#
 # 1. **Roadmap.** We start from a plain VGG-style network and add one design choice at a time (BatchNorm, global
 #    average pooling, augmentation, a fourth stage), so that every difference in accuracy has a single cause.
-# 2. **Depth and residual connections.** On top of the last network of the roadmap, we compare plain and residual
-#    networks of increasing depth.
-# 3. **Training recipe.** The three best networks receive the same hyperparameter search over the regularizers and the
-#    learning-rate schedule.
+# 2. **Depth and residual connections.** On top of the last network of the roadmap (which happened to be the best), we compare plain and residual networks of increasing depth.
+# 3. **Training recipe.** The three best networks receive the same hyperparameter search over the regularizers and the learning-rate schedule.
 # 4. **Longer training.** The tuned networks are trained for 150 epochs instead of 70, and the final model is selected.
 #
-# **Protocol.** Unless stated otherwise, all runs use 224x224 images, 70 epochs, batch 64 and SGD with momentum. Each
-# configuration is trained at three learning rates and represented by the best one. All choices are made on the
-# validation split; the test accuracy is reported but never used to select anything.
+# All runs use 224×224 images, batch 64 and SGD with momentum 0.9. The roadmap and the depth experiment train every network for 70 epochs at three learning rates and keep the best, since different networks prefer different learning rates. The training recipe then tunes the learning rate together with the other hyperparameters, and the final model and its ablation are trained for 150 epochs. All choices are made on the validation split while the test accuracy is reported but never used to select anything.
 #
-# **Result.** The final model is a residual network with 31 convolutional layers, trained for 150 epochs with the tuned
-# recipe: **74.0% ± 0.7 validation and 74.2% ± 0.2 test accuracy** (mean ± standard deviation over three seeds).
-#
-# The roadmap follows the approach of *A ConvNet for the 2020s* (Liu et al., CVPR 2022), which modernizes a ResNet one
-# design choice at a time: a cumulative ablation, in which each step keeps all the previous ones.
-#
-# *Lectures are those of part 2 of the course Image Processing and Computer Vision, cited by slide title.*
+# **Result.** The final model is a residual network with 31 convolutional layers, trained for 150 epochs with the tuned recipe: **74.0% ± 0.7 validation and 74.2% ± 0.2 test accuracy** (mean ± standard deviation over three seeds).
 
 # %% [markdown]
 # ## Setup
@@ -287,25 +296,14 @@ LONG_EPOCHS = 150
 # %% [markdown]
 # ## Data
 #
-# FGVC-Aircraft (`torchvision.datasets.FGVCAircraft`, `annotation_level="variant"`) has 100 classes and 3,334 /
-# 3,333 / 3,333 images in the training / validation / test splits: about **33 training images per class**. With so few images a network can
-# memorize the training set long before it learns features that generalize, and this is the problem most of the
-# following steps address.
+# FGVC-Aircraft (`torchvision.datasets.FGVCAircraft`, `annotation_level="variant"`) has 100 classes and 3,334 / 3,333 / 3,333 images in the training / validation / test splits: about **33 training images per class**. With so few images a network can memorize the training set long before it learns features that generalize, and this is the problem most of the following steps address.
 #
 # ![data pipeline](attachment:data_pipeline.png)
 #
-# **Preprocessing, once per split** (top row). We crop the 20-pixel copyright banner at the bottom of every image, so that the
-# network cannot rely on it, and resize the image to 224x224 *without* keeping the aspect ratio. The usual alternative
-# — resize the short side and crop the centre — would cut the left and right edges, and in this dataset the aircraft
-# spans almost the whole width of the image: a centre crop removes the nose and the tail, where variants of the same
-# family differ. Since almost all images share the same landscape aspect ratio, the stretch is the same fixed squeeze for
-# every image. Normalization uses the per-channel mean and standard deviation of the training split only.
+# **Preprocessing, once per split** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>
+# ). We then and resize the image to 224x224 *without* keeping the aspect ratio. Normalization uses the per-channel mean and standard deviation of the training split only.
 #
-# **Augmentation, on training batches only** (bottom row; lecture 6, *Data augmentation*). Random resized crops (50–100% of the area) and
-# horizontal flips change scale and position while preserving the label — a mirrored aircraft is still the same
-# aircraft; random erasing is added by the training recipe. We exclude vertical flips and large rotations, which produce
-# images that never occur at test time, and colour jitter, since colour mostly encodes the airline livery rather than
-# the variant.
+# **Augmentation, on training batches only** (bottom row; lecture 6, *Data augmentation*). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe.
 #
 # **Efficiency.** Decoding and resizing the full-resolution JPEGs at every epoch would make the CPU the bottleneck, so
 # each split is preprocessed once and cached as a tensor of 8-bit integers. During training the whole split is kept on the GPU,
@@ -1644,59 +1642,6 @@ else:
 # A fine-grained task is expected to concentrate its errors on visually similar variants rather than spreading them
 # uniformly: the pairs above show which variants the model cannot yet separate, and the per-class accuracy shows how
 # unevenly the 100 classes are learned.
-
-# %% [markdown]
-# ## 6. Reproducibility
-#
-# Training is deterministic for a given seed, hardware and software. The study contains duplicate trainings of
-# identical configurations: the last network of the roadmap and the 11-layer plain network of the depth experiment are the same
-# network trained separately, at three learning rates. We compare their stored results; optionally (`CHECK_RETRAIN = True`),
-# the final model is also trained again and compared with its stored run.
-
-# %%
-CHECK_RETRAIN = False      # True: also retrain the final model (seed 42) and compare it with its stored run
-
-def same_run(a, b):
-    cfg = lambda r: {k: v for k, v in r["config"].items() if k not in ("name", "group")}
-    return dict(same_config=cfg(a) == cfg(b),
-                identical_curves=all(a["history"][k] == b["history"][k] for k in ("train_loss", "train_acc", "val_loss", "val_acc")),
-                identical_test_predictions=a["test_pred"] == b["test_pred"],
-                val=a["best_val_acc"], test=a["test_acc"], device=a["device"])
-
-rows = []
-for lr in LR_SWEEP:
-    a = json.loads(result_path(f"s4_stage4_lr{lr:g}", "ladder", SEEDS[0]).read_text())
-    b = json.loads(result_path(f"plain_1111_lr{lr:g}", "depth_residual", SEEDS[0]).read_text())
-    rows.append(dict(pair=f"last roadmap network vs 11-layer plain network, learning rate {lr:g}", **same_run(a, b)))
-
-if CHECK_RETRAIN:
-    if data is None:
-        print("skipped: the dataset is not available")
-    else:
-        names = finalists(TUNE_N) or []
-        long_final = {n: long_runs(n) for n in names if len(long_runs(n)) == len(SEEDS)}
-        final = max(long_final, key=lambda n: seed_mean(long_final[n]))
-        stored = long_final[final][0]
-        cfg = {k: v for k, v in stored["config"].items() if k not in ("name", "group")}
-        fix_random(cfg["seed"])                          # exactly as run_experiment does
-        model, hist, best_epoch, _ = fit(cfg, data, verbose=False)
-        _, test_acc, test_pred = evaluate(model, data["test"], data, cfg, return_preds=True)
-        fresh = dict(config=stored["config"], history=hist, best_val_acc=max(hist["val_acc"]), test_acc=test_acc,
-                     test_pred=test_pred, device=torch.cuda.get_device_name() if AMP else str(DEVICE))
-        rows.append(dict(pair=f"stored {label(final)} (seed 42) vs retrained now", **same_run(stored, fresh)))
-
-display(pd.DataFrame(rows).set_index("pair").style.format({"val": "{:.4f}", "test": "{:.4f}"}))
-
-# %% [markdown]
-# The duplicate trainings are identical in every epoch and in every test prediction: the stored results can be
-# reproduced exactly on the same hardware (all runs were trained on an NVIDIA A100) and software. On different GPUs
-# or library versions, floating-point operations are executed in a different order and results differ slightly, by
-# less than the run-to-run noise measured with the seeds.
-
-# %% [markdown]
-# ## 7. Ablation study
-#
-# *To be added: leave-one-out ablation of the final model.*
 
 # %% [markdown]
 # ## Conclusions
