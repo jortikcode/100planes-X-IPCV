@@ -1,17 +1,17 @@
 # implementations
 
-- [ ] gestione univoca dei download delle run e dei modelli tramite gdown
+- [x] gestione univoca dei download delle run e dei modelli tramite gdown
 - [ ] best-model -> retrain/dl results/dl wights
   - [ ] caricare modello su cartella condivisa
 - [ ] control runs (for bn) in ablation study
-- [ ] torchvision diagram (part 1)
+- [ ] torch view diagram (part 1) [https://github.com/mert-kurttutan/torchview]
 - [ ] diagrammini di juan
 
 # to remove
 
-- [ ] drive and colab only libraries
-- [ ] caching
-- [ ] gpu acceleration
+- [x] drive and colab only libraries
+- [x] caching
+- [x] gpu acceleration
 - [ ] useless torchinfo prints (training)
 - [ ] mixed precision in CUDA (?)
 
