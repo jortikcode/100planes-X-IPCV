@@ -6,6 +6,7 @@
 - [ ] control runs (for bn) in ablation study
 - [ ] torch view diagram (part 1) [https://github.com/mert-kurttutan/torchview]
 - [ ] diagrammini di juan
+- spiegazione sul perché l'ablation della batch norm è così impattante
 
 # to remove
 
