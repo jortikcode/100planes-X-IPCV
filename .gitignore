@@ -3,3 +3,4 @@ GEMINI.md
 *.pt
 data/
 cache/
+figures/__pycache__
