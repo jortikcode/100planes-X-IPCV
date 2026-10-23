@@ -2,6 +2,7 @@
 
 - [ ] gestione univoca dei download delle run e dei modelli tramite gdown
 - [ ] best-model -> retrain/dl results/dl wights
+  - [ ] caricare modello su cartella condivisa
 - [ ] control runs (for bn) in ablation study
 - [ ] torchvision diagram (part 1)
 - [ ] diagrammini di juan
@@ -9,11 +10,10 @@
 # to remove
 
 - [ ] drive and colab only libraries
-- [ ] multi seed runs (?)
 - [ ] caching
 - [ ] gpu acceleration
 - [ ] useless torchinfo prints (training)
-- [ ] sanity checks (?)
+- [ ] mixed precision in CUDA (?)
 
 # simplify
 

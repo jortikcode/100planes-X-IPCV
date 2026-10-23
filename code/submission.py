@@ -68,19 +68,19 @@
 # %% [markdown]
 # ## Setup (shared by all parts)
 #
-# **How to run.** The notebook runs top to bottom on Colab (GPU runtime). All the runs reported below are stored in the
-# repository (`results/part1`, `results/part2A`) and are downloaded automatically: a run whose result already exists with the same
-# configuration is skipped, so the whole notebook, tables and plots included, reproduces our results in a few minutes
-# without training. Setting `RETRAIN = True` trains everything again (about 3 hours on an A100). If the official dataset server is
-# unavailable, the same archive is downloaded from a Kaggle mirror; if that fails too, the cells that need the images
-# are skipped and the stored results are
-# still loaded and shown. The dataset is cached
-# once, already preprocessed. On Colab, `USE_DRIVE = True` keeps results and image cache in Google Drive, so
-# that they persist across sessions; with `USE_DRIVE = False` everything stays on the temporary disk of the session and
-# no access to Google Drive is required (the image cache is then rebuilt in each new session).
+# **How to run.** The notebook runs top to bottom, locally or on Colab (GPU runtime), and needs no access to Google
+# Drive. All the runs reported below are stored in a shared Google Drive folder (a copy of the `results` directory) and
+# the ones missing from the local `results` directory are downloaded automatically with `gdown`: a run whose result
+# already exists with the same configuration is skipped, so the whole notebook, tables and plots included, reproduces
+# our results in a few minutes without training. Setting `RETRAIN = True` trains everything again (about 3 hours on an
+# A100). If the official dataset server is unavailable, the same archive is downloaded from a Kaggle mirror; if that
+# fails too, the cells that need the images are skipped and the stored results are still loaded and shown. The
+# dataset is cached once, already preprocessed. Locally, results are kept in the `results` directory of the repository
+# and the dataset and the image cache in the `data` directory of the repository (git-ignored, created if missing); on Colab both stay on the temporary disk of the session (the image cache
+# is then rebuilt in each new session).
 
 # %%
-# %pip install -q torchinfo kagglehub
+# %pip install -q torchinfo kagglehub gdown
 
 # %%
 import contextlib, json, math, random, sys, time
@@ -100,81 +100,112 @@ import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
 IN_COLAB = "google.colab" in sys.modules
-DEVICE = torch.device("cuda" if torch.cuda.is_available()
-                      else "mps" if torch.backends.mps.is_available() else "cpu")
+DEVICE = torch.device(
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps"
+    if torch.backends.mps.is_available()
+    else "cpu"
+)
 
 # Mixed precision on CUDA only: bfloat16 where supported (A100, L4), float16 + loss scaling otherwise (T4)
 AMP = DEVICE.type == "cuda"
-AMP_DTYPE = torch.bfloat16 if (AMP and torch.cuda.is_bf16_supported()) else torch.float16
+AMP_DTYPE = (
+    torch.bfloat16 if (AMP and torch.cuda.is_bf16_supported()) else torch.float16
+)
 
-RETRAIN = False        # True: retrain runs even if their JSON already exists
-SHOW_SUMMARY = True    # print the model summary when a run starts with a different architecture than the last one
-USE_DRIVE = False       # Colab only: keep results and image cache in Google Drive (False: Colab's temporary disk)
-print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if AMP else "")
-      + f" | amp: {AMP_DTYPE if AMP else 'off'} | torch {torch.__version__}")
+RETRAIN = False  # True: retrain runs even if their JSON already exists
+SHOW_SUMMARY = True  # print the model summary when a run starts with a different architecture than the last one
+print(
+    f"device: {DEVICE}"
+    + (f" ({torch.cuda.get_device_name()})" if AMP else "")
+    + f" | amp: {AMP_DTYPE if AMP else 'off'} | torch {torch.__version__}"
+)
 
 # %% [markdown]
 # ### Paths
 #
-# On Colab, results and the preprocessed image cache are kept in Google Drive when `USE_DRIVE = True`, so that they
-# survive the end of a session, and on the temporary disk of the session otherwise; in both cases the stored results of
-# the repository are downloaded there before anything else. Locally, they are read from the repository itself.
+# Results and the preprocessed image cache are kept in the repository (`results/`, `data/`) when the
+# notebook runs locally, and on the temporary disk of the session on Colab. The stored results of the project are then
+# downloaded with `gdown` from the shared Google Drive folder, which holds a copy of the `results` directory: only the
+# files that are not already there, and existing files are never overwritten.
 
 # %%
-if IN_COLAB and USE_DRIVE:
-    from google.colab import drive
-    drive.mount("/content/drive")
-    RESULTS_DIR = Path("/content/drive/MyDrive/ipcv/results/part1")
-    RESULTS_DIR_2A = Path("/content/drive/MyDrive/ipcv/results/part2A")
-    CACHE_DIR = Path("/content/drive/MyDrive/ipcv/cache")
-    DATA_ROOT = Path("/content/data")
-elif IN_COLAB:
-    # everything on the temporary disk of the session: no access to Google Drive is needed
-    RESULTS_DIR = Path("/content/results/part1")
-    RESULTS_DIR_2A = Path("/content/results/part2A")
+if IN_COLAB:
+    RESULTS_ROOT = Path("/content/results")
     CACHE_DIR = Path("/content/cache")
     DATA_ROOT = Path("/content/data")
 else:
     REPO_DIR = Path.cwd().parent if Path.cwd().name == "code" else Path.cwd()
-    RESULTS_DIR = REPO_DIR / "results" / "part1"
-    RESULTS_DIR_2A = REPO_DIR / "results" / "part2A"
-    DATA_ROOT = Path.home() / "data" / "fgvc"
+    RESULTS_ROOT = REPO_DIR / "results"
+    DATA_ROOT = (
+        REPO_DIR / "data"
+    )  # dataset and image cache: git-ignored, created if missing
     CACHE_DIR = DATA_ROOT / "cache"
+RESULTS_DIR = RESULTS_ROOT / "part1"
+RESULTS_DIR_2A = RESULTS_ROOT / "part2A"
 
-for d in (RESULTS_DIR, RESULTS_DIR_2A, CACHE_DIR):
+for d in (RESULTS_DIR, RESULTS_DIR_2A, DATA_ROOT, CACHE_DIR):
     d.mkdir(parents=True, exist_ok=True)
-print("results ->", RESULTS_DIR, "|", RESULTS_DIR_2A)
+print("results ->", RESULTS_ROOT)
 
-GITHUB_REPO, GITHUB_REF = "jortikcode/100planes-X-IPCV", "main"   # a branch, or a tag to freeze the results
-FETCH_RESULTS = IN_COLAB      # locally the repo already contains them
+GDRIVE_FOLDER = "https://drive.google.com/drive/folders/1KfN4HcjaVCuXfqei8PaubVUVhffhJan2"  # copy of results/
+FETCH_RESULTS = True  # False: use only the results already in RESULTS_ROOT
 
 
-def fetch_results(repo, ref, dest, part):
-    # Download the repo as one archive and copy its results/<part> JSON files into dest, never overwriting.
-    import io, tarfile, urllib.request
-    prefix = f"results/{part}/"
-    with urllib.request.urlopen(f"https://github.com/{repo}/archive/{ref}.tar.gz") as response:
-        archive = tarfile.open(fileobj=io.BytesIO(response.read()), mode="r:gz")
-    added = kept = 0
-    for member in archive.getmembers():
-        path = member.name.split("/", 1)[-1]                 # drop the "<repo>-<ref>/" prefix
-        name = path.rsplit("/", 1)[-1]
-        if (not (member.isfile() and path.startswith(prefix) and name.endswith(".json"))
-                or ".." in path or name.startswith(".")):
+def fetch_results(folder_url, dest_root):
+    # List the shared Google Drive folder (a copy of results/) and download with gdown the JSON files that are not in
+    # dest_root yet, never overwriting an existing file.
+    import gdown
+
+    files = gdown.download_folder(
+        url=folder_url, skip_download=True, quiet=True, use_cookies=False
+    )
+    added = kept = failed = 0
+    last_error = None
+    for f in tqdm(files, desc="results from Google Drive"):
+        path = Path(f.path)
+        if (
+            path.suffix != ".json"
+            or path.is_absolute()
+            or ".." in path.parts
+            or any(p.startswith(".") for p in path.parts)
+        ):
             continue
-        target = dest / path[len(prefix):]
+        target = dest_root / path
         if target.exists():
             kept += 1
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(archive.extractfile(member).read())
-        added += 1
-    print(f"results/{part} from github.com/{repo} ({ref}): {added} downloaded, {kept} already present")
+        try:
+            ok = (
+                gdown.download(
+                    id=f.id, output=str(target), quiet=True, use_cookies=False
+                )
+                is not None
+            )
+        except Exception as e:  # e.g. the daily download quota of the file is exceeded
+            ok = False
+            last_error = e
+        failed += not ok
+        added += ok
+    print(
+        f"results from Google Drive: {added} downloaded, {kept} already present"
+        + (
+            f", {failed} FAILED (rerun the cell to retry): {last_error}"
+            if failed
+            else ""
+        )
+    )
 
 
 if FETCH_RESULTS:
-    for part, dest in (("part1", RESULTS_DIR), ("part2A", RESULTS_DIR_2A)):
-        fetch_results(GITHUB_REPO, GITHUB_REF, dest, part)
+    try:
+        fetch_results(GDRIVE_FOLDER, RESULTS_ROOT)
+    except Exception as e:
+        print(
+            f"WARNING: could not download the results from Google Drive ({e}); using the ones already in {RESULTS_ROOT}"
+        )
 
 # %% [markdown]
 # ### Reproducibility
@@ -182,6 +213,7 @@ if FETCH_RESULTS:
 # We seed every source of randomness (initialization, data order, augmentation) and keep cuDNN deterministic, so that a
 # configuration trained twice with the same seed gives the same result. Training a configuration with different seeds
 # is how we measure run-to-run noise.
+
 
 # %%
 def fix_random(seed):
@@ -230,23 +262,26 @@ BASE = dict(
     # data
     img_size=224,
     augment=False,
-    crop_scale=(0.5, 1.0),           # RandomResizedCrop: area of the crop, as a fraction of the image
+    crop_scale=(
+        0.5,
+        1.0,
+    ),  # RandomResizedCrop: area of the crop, as a fraction of the image
     # architecture
     stem=(32, 32, 64),
     channels=(64, 128, 256),
-    blocks=(1, 1, 1),                # blocks per stage; a block is two 3x3 convs
+    blocks=(1, 1, 1),  # blocks per stage; a block is two 3x3 convs
     batchnorm=False,
     gap=False,
     residual=False,
-    dropout=0.0,                     # before the classifier; searched in the training recipe
+    dropout=0.0,  # before the classifier; searched in the training recipe
     # training
     epochs=70,
     batch_size=64,
-    lr=0.05,                         # overridden by the sweep
+    lr=0.05,  # overridden by the sweep
     momentum=0.9,
-    weight_decay=0.0,                # searched in the training recipe
-    label_smoothing=0.0,             # searched in the training recipe
-    random_erasing=0.0,              # probability of erasing a random rectangle; searched in the training recipe
+    weight_decay=0.0,  # searched in the training recipe
+    label_smoothing=0.0,  # searched in the training recipe
+    random_erasing=0.0,  # probability of erasing a random rectangle; searched in the training recipe
     warmup_epochs=3,
 )
 
@@ -258,10 +293,10 @@ SEEDS = [42, 43, 44]
 
 # The ladder: each step adds exactly one change on top of all the previous ones
 STEPS = [
-    ("s0_vgg",    dict()),
-    ("s1_bn",     dict(batchnorm=True)),
-    ("s2_gap",    dict(gap=True)),
-    ("s3_aug",    dict(augment=True)),
+    ("s0_vgg", dict()),
+    ("s1_bn", dict(batchnorm=True)),
+    ("s2_gap", dict(gap=True)),
+    ("s3_aug", dict(augment=True)),
     ("s4_stage4", dict(channels=(64, 128, 256, 512), blocks=(1, 1, 1, 1))),
 ]
 
@@ -280,12 +315,15 @@ S4 = LADDER[-1][1]
 
 # Depth x residual, on top of s4: three depths, each with and without skip connections (see the section for why)
 GRID = [
-    ("plain_1111", dict(S4, blocks=(1, 1, 1, 1), residual=False)),   # = s4
-    ("res_1111",   dict(S4, blocks=(1, 1, 1, 1), residual=True)),
-    ("plain_2222", dict(S4, blocks=(2, 2, 2, 2), residual=False)),   # ResNet-18 layout
-    ("res_2222",   dict(S4, blocks=(2, 2, 2, 2), residual=True)),
-    ("plain_3461", dict(S4, blocks=(3, 4, 6, 1), residual=False)),   # ResNet-34 layout, one 512-block
-    ("res_3461",   dict(S4, blocks=(3, 4, 6, 1), residual=True)),
+    ("plain_1111", dict(S4, blocks=(1, 1, 1, 1), residual=False)),  # = s4
+    ("res_1111", dict(S4, blocks=(1, 1, 1, 1), residual=True)),
+    ("plain_2222", dict(S4, blocks=(2, 2, 2, 2), residual=False)),  # ResNet-18 layout
+    ("res_2222", dict(S4, blocks=(2, 2, 2, 2), residual=True)),
+    (
+        "plain_3461",
+        dict(S4, blocks=(3, 4, 6, 1), residual=False),
+    ),  # ResNet-34 layout, one 512-block
+    ("res_3461", dict(S4, blocks=(3, 4, 6, 1), residual=True)),
 ]
 
 # The regularizers of the training recipe, at the values they keep during step 1 of its search (lr x weight decay)
@@ -293,18 +331,18 @@ RECIPE = dict(weight_decay=5e-4, label_smoothing=0.1, dropout=0.2, random_erasin
 
 # Recipe tuning (see its section): the TUNE_N best networks of the grid get the same search
 TUNE_N = 3
-TUNE_LRS = [0.1, 0.05]                      # grid search: learning rate x weight decay (log-spaced)
+TUNE_LRS = [0.1, 0.05]  # grid search: learning rate x weight decay (log-spaced)
 TUNE_WDS = [1e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2]
-SEARCH_SPACE = dict(                        # random search over the other recipe parameters
+SEARCH_SPACE = dict(  # random search over the other recipe parameters
     label_smoothing=[0.0, 0.05, 0.1, 0.2],
     dropout=[0.0, 0.2, 0.5],
     random_erasing=[0.0, 0.25, 0.5],
     crop_scale=[(0.25, 1.0), (0.35, 1.0), (0.5, 1.0)],
     schedule=["cosine", "onecycle"],
 )
-N_RANDOM = 12            # random configurations, the same list for every network
-SEARCH_SEED = 0          # seed of the random draw of the configurations (not of the trainings)
-TOP_K = 2                # best configurations of each network confirmed with the other seeds
+N_RANDOM = 12  # random configurations, the same list for every network
+SEARCH_SEED = 0  # seed of the random draw of the configurations (not of the trainings)
+TOP_K = 2  # best configurations of each network confirmed with the other seeds
 
 # Longer training: the tuned networks, each with its best configuration, trained for more epochs
 LONG_EPOCHS = 150
@@ -351,15 +389,26 @@ for name, over in LADDER + GRID:
 
 # %%
 BANNER_PX = 20
-KAGGLE_MIRROR = "seryouxblaster764/fgvc-aircraft"     # public copy of the official fgvc-aircraft-2013b archive
-IMAGENET_MEAN, IMAGENET_STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)   # statistics the pretrained ResNet-18 expects
+KAGGLE_MIRROR = "seryouxblaster764/fgvc-aircraft"  # public copy of the official fgvc-aircraft-2013b archive
+IMAGENET_MEAN, IMAGENET_STD = (
+    (0.485, 0.456, 0.406),
+    (0.229, 0.224, 0.225),
+)  # statistics the pretrained ResNet-18 expects
 
 
 def fetch_from_kaggle(root):
     # Download the official archive from the Kaggle mirror and place it where torchvision's FGVCAircraft expects it.
     import kagglehub
+
     path = Path(kagglehub.dataset_download(KAGGLE_MIRROR))
-    source = next((p for p in [path, *path.rglob("fgvc-aircraft-2013b")] if (p / "data" / "images").is_dir()), None)
+    source = next(
+        (
+            p
+            for p in [path, *path.rglob("fgvc-aircraft-2013b")]
+            if (p / "data" / "images").is_dir()
+        ),
+        None,
+    )
     if source is None:
         raise RuntimeError(f"unexpected layout of the Kaggle mirror in {path}")
     target = root / "fgvc-aircraft-2013b"
@@ -367,7 +416,9 @@ def fetch_from_kaggle(root):
     if target.is_symlink() or target.exists():
         if (target / "data" / "images").is_dir():
             return
-        raise RuntimeError(f"{target} exists but is incomplete: remove it and run again")
+        raise RuntimeError(
+            f"{target} exists but is incomplete: remove it and run again"
+        )
     target.symlink_to(source, target_is_directory=True)
 
 
@@ -379,21 +430,31 @@ def build_cache(split, img_size):
         if p.exists():
             return torch.load(p)
     try:
-        dset = datasets.FGVCAircraft(DATA_ROOT, split=split, annotation_level="variant", download=True)
+        dset = datasets.FGVCAircraft(
+            DATA_ROOT, split=split, annotation_level="variant", download=True
+        )
     except Exception as official_error:
         # the official server is sometimes unavailable: same archive from the Kaggle mirror, still read by torchvision
-        print(f"official download failed ({official_error}): using the Kaggle mirror {KAGGLE_MIRROR}")
+        print(
+            f"official download failed ({official_error}): using the Kaggle mirror {KAGGLE_MIRROR}"
+        )
         try:
             fetch_from_kaggle(DATA_ROOT)
-            dset = datasets.FGVCAircraft(DATA_ROOT, split=split, annotation_level="variant", download=True)
+            dset = datasets.FGVCAircraft(
+                DATA_ROOT, split=split, annotation_level="variant", download=True
+            )
         except Exception as e:
-            raise RuntimeError(f"could not download FGVC-Aircraft, neither from the official server "
-                               f"({official_error}) nor from Kaggle ({e})") from e
+            raise RuntimeError(
+                f"could not download FGVC-Aircraft, neither from the official server "
+                f"({official_error}) nor from Kaggle ({e})"
+            ) from e
     images, labels = [], []
     for i in tqdm(range(len(dset)), desc=f"caching {split} @ {img_size}px"):
         img, label = dset[i]
         img = img.crop((0, 0, img.width, img.height - BANNER_PX))
-        images.append(TF.pil_to_tensor(TF.resize(img, [img_size, img_size], antialias=True)))
+        images.append(
+            TF.pil_to_tensor(TF.resize(img, [img_size, img_size], antialias=True))
+        )
         labels.append(label)
     cached = (torch.stack(images), torch.tensor(labels), dset.classes)
     torch.save(cached, path)
@@ -419,8 +480,11 @@ def get_data(img_size, imagenet_stats=False):
     key = (img_size, imagenet_stats)
     if key not in _DATA:
         other = _DATA.get((img_size, not imagenet_stats))
-        splits = ({s: other[s] for s in ("train", "val", "test")} if other
-                  else {s: GPUSplit(s, img_size) for s in ("train", "val", "test")})      # same images on the GPU
+        splits = (
+            {s: other[s] for s in ("train", "val", "test")}
+            if other
+            else {s: GPUSplit(s, img_size) for s in ("train", "val", "test")}
+        )  # same images on the GPU
         if imagenet_stats:
             mean = torch.tensor(IMAGENET_MEAN, device=DEVICE).view(1, 3, 1, 1)
             std = torch.tensor(IMAGENET_STD, device=DEVICE).view(1, 3, 1, 1)
@@ -444,10 +508,16 @@ def gpu_augment(x, size, scale=(0.5, 1.0), ratio=(3 / 4, 4 / 3)):
     x0 = torch.rand(B, device=dev) * (W - w)
     y0 = torch.rand(B, device=dev) * (H - h)
     idx = torch.arange(B, device=dev, dtype=x.dtype)
-    boxes = torch.stack([idx, x0, y0, x0 + w, y0 + h], dim=1)      # one box per image: (index, x1, y1, x2, y2)
-    out = roi_align(x, boxes, output_size=size, aligned=True)      # crop every box and resize it to size x size
+    boxes = torch.stack(
+        [idx, x0, y0, x0 + w, y0 + h], dim=1
+    )  # one box per image: (index, x1, y1, x2, y2)
+    out = roi_align(
+        x, boxes, output_size=size, aligned=True
+    )  # crop every box and resize it to size x size
     flip = torch.rand(B, device=dev) < 0.5
-    return torch.where(flip.view(B, 1, 1, 1), out.flip(-1), out)          # flip half of the images
+    return torch.where(
+        flip.view(B, 1, 1, 1), out.flip(-1), out
+    )  # flip half of the images
 
 
 def gpu_random_erasing(x, p, scale=(0.02, 0.33), ratio=(0.3, 3.3)):
@@ -455,7 +525,9 @@ def gpu_random_erasing(x, p, scale=(0.02, 0.33), ratio=(0.3, 3.3)):
     B, _, H, W = x.shape
     dev = x.device
     area = torch.empty(B, device=dev).uniform_(*scale) * H * W
-    r = torch.exp(torch.empty(B, device=dev).uniform_(math.log(ratio[0]), math.log(ratio[1])))
+    r = torch.exp(
+        torch.empty(B, device=dev).uniform_(math.log(ratio[0]), math.log(ratio[1]))
+    )
     h = torch.sqrt(area * r).clamp(max=H).view(B, 1, 1)
     w = torch.sqrt(area / r).clamp(max=W).view(B, 1, 1)
     y0 = torch.rand(B, 1, 1, device=dev) * (H - h)
@@ -463,7 +535,7 @@ def gpu_random_erasing(x, p, scale=(0.02, 0.33), ratio=(0.3, 3.3)):
     ys = torch.arange(H, device=dev).view(1, H, 1)
     xs = torch.arange(W, device=dev).view(1, 1, W)
     mask = (ys >= y0) & (ys < y0 + h) & (xs >= x0) & (xs < x0 + w)
-    mask &= (torch.rand(B, 1, 1, device=dev) < p)
+    mask &= torch.rand(B, 1, 1, device=dev) < p
     return x.masked_fill(mask.unsqueeze(1), 0.0)
 
 
@@ -473,16 +545,17 @@ def batches(split, data, cfg, train):
     order = torch.randperm(n).to(DEVICE) if train else torch.arange(n, device=DEVICE)
     bs = cfg["batch_size"] if train else 512
     for i in range(0, n, bs):
-        idx = order[i:i + bs]
+        idx = order[i : i + bs]
         if train and len(idx) < bs:
             break
-        x = split.x[idx].float() / 255                                       # float batch, in [0, 1]
+        x = split.x[idx].float() / 255  # float batch, in [0, 1]
         if train and cfg["augment"]:
             x = gpu_augment(x, cfg["img_size"], scale=tuple(cfg["crop_scale"]))
-        x = (x - data["mean"]) / data["std"]                                 # normalized batch
+        x = (x - data["mean"]) / data["std"]  # normalized batch
         if train and cfg["random_erasing"] > 0:
             x = gpu_random_erasing(x, cfg["random_erasing"])
         yield x.contiguous(memory_format=torch.channels_last), split.y[idx]
+
 
 # %% [markdown]
 # Six training images as the network receives them (top) and after crop and flip (bottom).
@@ -492,14 +565,18 @@ try:
     data = get_data(BASE["img_size"])
 except Exception as e:
     data = None
-    print(f"WARNING: the dataset is not available ({e})\n"
-          "The cells that need the images are skipped; the stored results are still loaded and shown.")
+    print(
+        f"WARNING: the dataset is not available ({e})\n"
+        "The cells that need the images are skipped; the stored results are still loaded and shown."
+    )
 
-N_CLASSES = 100                                   # FGVC-Aircraft, annotation_level="variant"
+N_CLASSES = 100  # FGVC-Aircraft, annotation_level="variant"
 if data is not None:
     CLASSES = data["train"].classes
     assert len(CLASSES) == N_CLASSES
-    print(f"classes: {N_CLASSES} | train {len(data['train'])} | val {len(data['val'])} | test {len(data['test'])}")
+    print(
+        f"classes: {N_CLASSES} | train {len(data['train'])} | val {len(data['val'])} | test {len(data['test'])}"
+    )
 
     fix_random(0)
     x = data["train"].x[:6].float() / 255
@@ -513,7 +590,8 @@ if data is not None:
                 axes[r, c].set_title(CLASSES[data["train"].y[c]], fontsize=9)
     axes[0, 0].text(-20, 80, "plain", rotation=90, va="center")
     axes[1, 0].text(-20, 80, "augmented (from s3)", rotation=90, va="center")
-    plt.tight_layout(); plt.show()
+    plt.tight_layout()
+    plt.show()
 
 # %% [markdown]
 # ## The network
@@ -549,6 +627,7 @@ if data is not None:
 # create the projections, so plain and residual versions of a network have almost the same number of parameters.
 # With one block per stage every skip is a projection; identity skips appear from the second block of a stage on.
 
+
 # %%
 def conv_bn(c_in, c_out, k, stride, bn):
     layers = [nn.Conv2d(c_in, c_out, k, stride=stride, padding=k // 2, bias=not bn)]
@@ -564,7 +643,7 @@ class Block(nn.Module):
         self.conv2 = conv_bn(c_out, c_out, 3, 1, bn)
         self.residual = residual
         if residual and (stride != 1 or c_in != c_out):
-            self.skip = conv_bn(c_in, c_out, 1, stride, bn)      # projection
+            self.skip = conv_bn(c_in, c_out, 1, stride, bn)  # projection
         else:
             self.skip = nn.Identity()
 
@@ -581,9 +660,12 @@ class AircraftNet(nn.Module):
         bn = cfg["batchnorm"]
         c1, c2, c3 = cfg["stem"]
         self.stem = nn.Sequential(
-            conv_bn(3, c1, 3, 2, bn), nn.ReLU(inplace=True),
-            conv_bn(c1, c2, 3, 1, bn), nn.ReLU(inplace=True),
-            conv_bn(c2, c3, 3, 1, bn), nn.ReLU(inplace=True),
+            conv_bn(3, c1, 3, 2, bn),
+            nn.ReLU(inplace=True),
+            conv_bn(c1, c2, 3, 1, bn),
+            nn.ReLU(inplace=True),
+            conv_bn(c2, c3, 3, 1, bn),
+            nn.ReLU(inplace=True),
             nn.MaxPool2d(3, stride=2, padding=1),
         )
         layers, c_in = [], c3
@@ -595,13 +677,22 @@ class AircraftNet(nn.Module):
         self.stages = nn.Sequential(*layers)
 
         if cfg["gap"]:
-            self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(),
-                                      nn.Dropout(cfg["dropout"]), nn.Linear(c_in, n_classes))
+            self.head = nn.Sequential(
+                nn.AdaptiveAvgPool2d(1),
+                nn.Flatten(),
+                nn.Dropout(cfg["dropout"]),
+                nn.Linear(c_in, n_classes),
+            )
         else:
-            with torch.no_grad():   # size of the last feature map, for the flatten head
-                s = self.stages(self.stem(torch.zeros(1, 3, cfg["img_size"], cfg["img_size"]))).shape
-            self.head = nn.Sequential(nn.Flatten(), nn.Dropout(cfg["dropout"]),
-                                      nn.Linear(s[1] * s[2] * s[3], n_classes))
+            with torch.no_grad():  # size of the last feature map, for the flatten head
+                s = self.stages(
+                    self.stem(torch.zeros(1, 3, cfg["img_size"], cfg["img_size"]))
+                ).shape
+            self.head = nn.Sequential(
+                nn.Flatten(),
+                nn.Dropout(cfg["dropout"]),
+                nn.Linear(s[1] * s[2] * s[3], n_classes),
+            )
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -619,7 +710,9 @@ def build_model(cfg, n_classes=100):
     if not cfg.get("pretrained", False):
         return AircraftNet(cfg, n_classes)
     model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
-    model.fc = nn.Sequential(nn.Dropout(cfg["dropout"]), nn.Linear(model.fc.in_features, n_classes))
+    model.fc = nn.Sequential(
+        nn.Dropout(cfg["dropout"]), nn.Linear(model.fc.in_features, n_classes)
+    )
     return model
 
 
@@ -634,16 +727,26 @@ def count_gflops(model, img_size):
     def hook(m, inp, out):
         nonlocal macs
         if isinstance(m, nn.Conv2d):
-            macs += out[0].numel() * (m.in_channels // m.groups) * m.kernel_size[0] * m.kernel_size[1]
+            macs += (
+                out[0].numel()
+                * (m.in_channels // m.groups)
+                * m.kernel_size[0]
+                * m.kernel_size[1]
+            )
         elif isinstance(m, nn.Linear):
             macs += m.in_features * m.out_features
 
-    handles = [m.register_forward_hook(hook) for m in model.modules() if isinstance(m, (nn.Conv2d, nn.Linear))]
+    handles = [
+        m.register_forward_hook(hook)
+        for m in model.modules()
+        if isinstance(m, (nn.Conv2d, nn.Linear))
+    ]
     with torch.no_grad():
         model.eval()(torch.zeros(1, 3, img_size, img_size))
     for h in handles:
         h.remove()
     return 2 * macs / 1e9
+
 
 # %% [markdown]
 # Layer-by-layer summary of one network (`torchinfo`); a summary is also printed at the start of every run whose
@@ -651,7 +754,17 @@ def count_gflops(model, img_size):
 
 # %%
 # the keys that define the architecture: two runs with the same values build the same network
-ARCH_KEYS = ("img_size", "stem", "channels", "blocks", "batchnorm", "gap", "residual", "dropout", "pretrained")
+ARCH_KEYS = (
+    "img_size",
+    "stem",
+    "channels",
+    "blocks",
+    "batchnorm",
+    "gap",
+    "residual",
+    "dropout",
+    "pretrained",
+)
 
 
 # the keys that only describe AircraftNet: a pretrained run does not store them
@@ -659,9 +772,15 @@ SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual
 
 
 def show_summary(cfg, depth=4):
-    return torchinfo.summary(build_model(cfg, N_CLASSES), input_size=(1, 3, cfg["img_size"], cfg["img_size"]),
-                             col_names=("output_size", "num_params"), row_settings=("var_names",),
-                             depth=depth, device="cpu", verbose=0)
+    return torchinfo.summary(
+        build_model(cfg, N_CLASSES),
+        input_size=(1, 3, cfg["img_size"], cfg["img_size"]),
+        col_names=("output_size", "num_params"),
+        row_settings=("var_names",),
+        depth=depth,
+        device="cpu",
+        verbose=0,
+    )
 
 
 show_summary({**BASE, **dict(GRID)["res_2222"]})
@@ -676,9 +795,18 @@ for name, over in LADDER + GRID:
     cfg = {**BASE, **over}
     m = AircraftNet(cfg, N_CLASSES)
     head = sum(p.numel() for p in m.head.parameters())
-    rows.append(dict(run=name, params_M=count_params(m) / 1e6, head_share=head / count_params(m),
-                     GFLOPs=count_gflops(m, cfg["img_size"]), convs=sum(isinstance(l, nn.Conv2d) for l in m.modules())))
-pd.DataFrame(rows).set_index("run").style.format({"params_M": "{:.2f}", "head_share": "{:.0%}", "GFLOPs": "{:.2f}"})
+    rows.append(
+        dict(
+            run=name,
+            params_M=count_params(m) / 1e6,
+            head_share=head / count_params(m),
+            GFLOPs=count_gflops(m, cfg["img_size"]),
+            convs=sum(isinstance(l, nn.Conv2d) for l in m.modules()),
+        )
+    )
+pd.DataFrame(rows).set_index("run").style.format(
+    {"params_M": "{:.2f}", "head_share": "{:.0%}", "GFLOPs": "{:.2f}"}
+)
 
 # %% [markdown]
 # ## Training
@@ -692,6 +820,7 @@ pd.DataFrame(rows).set_index("run").style.format({"params_M": "{:.2f}", "head_sh
 # - **Model selection**: we keep the epoch with the highest validation accuracy and evaluate the test split once, on
 #   that checkpoint.
 
+
 # %%
 def autocast():
     return torch.autocast("cuda", dtype=AMP_DTYPE) if AMP else contextlib.nullcontext()
@@ -700,9 +829,14 @@ def autocast():
 def make_optimizer(model, cfg):
     decay = [p for p in model.parameters() if p.ndim > 1]
     no_decay = [p for p in model.parameters() if p.ndim <= 1]
-    return torch.optim.SGD([{"params": decay, "weight_decay": cfg["weight_decay"]},
-                            {"params": no_decay, "weight_decay": 0.0}],
-                           lr=cfg["lr"], momentum=cfg["momentum"])
+    return torch.optim.SGD(
+        [
+            {"params": decay, "weight_decay": cfg["weight_decay"]},
+            {"params": no_decay, "weight_decay": 0.0},
+        ],
+        lr=cfg["lr"],
+        momentum=cfg["momentum"],
+    )
 
 
 def lr_at(epoch, cfg):
@@ -717,7 +851,9 @@ def lr_at(epoch, cfg):
         return end + (high - end) * (1 + math.cos(math.pi * t)) / 2
     if epoch < cfg["warmup_epochs"]:
         return cfg["lr"] * (epoch + 1) / cfg["warmup_epochs"]
-    progress = (epoch - cfg["warmup_epochs"]) / max(cfg["epochs"] - cfg["warmup_epochs"], 1)
+    progress = (epoch - cfg["warmup_epochs"]) / max(
+        cfg["epochs"] - cfg["warmup_epochs"], 1
+    )
     return cfg["lr"] * 0.5 * (1 + math.cos(math.pi * progress))
 
 
@@ -762,7 +898,10 @@ def fit(cfg, data, verbose=True):
     opt = make_optimizer(model, cfg)
     scaler = torch.amp.GradScaler("cuda", enabled=AMP and AMP_DTYPE == torch.float16)
     criterion = nn.CrossEntropyLoss(label_smoothing=cfg["label_smoothing"])
-    hist = {k: [] for k in ("train_loss", "train_acc", "val_loss", "val_acc", "lr", "seconds")}
+    hist = {
+        k: []
+        for k in ("train_loss", "train_acc", "val_loss", "val_acc", "lr", "seconds")
+    }
     best_acc, best_epoch, best_state, diverged = -1.0, 0, None, False
 
     for epoch in range(cfg["epochs"]):
@@ -782,12 +921,15 @@ def fit(cfg, data, verbose=True):
             best_acc, best_epoch = va_acc, epoch + 1
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         if verbose and (epoch % 5 == 0 or epoch == cfg["epochs"] - 1):
-            print(f"  ep {epoch + 1:3d} | lr {lr:.4f} | train loss {tr_loss:.3f} acc {tr_acc:.3f} "
-                  f"| val loss {va_loss:.3f} acc {va_acc:.3f} | {hist['seconds'][-1]:.1f}s")
+            print(
+                f"  ep {epoch + 1:3d} | lr {lr:.4f} | train loss {tr_loss:.3f} acc {tr_acc:.3f} "
+                f"| val loss {va_loss:.3f} acc {va_acc:.3f} | {hist['seconds'][-1]:.1f}s"
+            )
 
     if best_state is not None:
         model.load_state_dict(best_state)
     return model, hist, best_epoch, diverged
+
 
 # %% [markdown]
 # ### Sanity checks
@@ -805,20 +947,26 @@ else:
     model = AircraftNet(cfg, N_CLASSES).to(DEVICE)
     x, y = next(batches(data["train"], data, cfg, train=True))
     with torch.no_grad():
-        print(f"initial loss {F.cross_entropy(model(x), y).item():.3f}  (expected ~{math.log(N_CLASSES):.2f})")
+        print(
+            f"initial loss {F.cross_entropy(model(x), y).item():.3f}  (expected ~{math.log(N_CLASSES):.2f})"
+        )
 
     # memorize 100 images with Adam, full batch
     idx = torch.arange(100, device=DEVICE)
-    x = ((data["train"].x[idx].float() / 255 - data["mean"]) / data["std"])
+    x = (data["train"].x[idx].float() / 255 - data["mean"]) / data["std"]
     y = data["train"].y[idx]
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     model.train()
     for step in range(150):
         loss = F.cross_entropy(model(x), y)
-        opt.zero_grad(); loss.backward(); opt.step()
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
     model.eval()
     with torch.no_grad():
-        print(f"tiny subset: train acc {(model(x).argmax(1) == y).float().mean().item():.2f}  (expected ~1.00)")
+        print(
+            f"tiny subset: train acc {(model(x).argmax(1) == y).float().mean().item():.2f}  (expected ~1.00)"
+        )
 
 # %% [markdown]
 # ## Experiment runner
@@ -828,6 +976,7 @@ else:
 # rate of the sweep (seed 42); `run_seeds` trains it with two more seeds at its best learning rate. Note that the seed-42
 # run of a configuration is the best of three learning rates, hence slightly optimistic; the two additional seeds are
 # not.
+
 
 # %%
 def result_path(name, group, seed, results_dir=None):
@@ -840,20 +989,43 @@ _last_arch = None
 def run_experiment(name, group, note="", results_dir=None, **overrides):
     global _last_arch
     cfg = {**BASE, **overrides, "name": name, "group": group}
-    if cfg.get("pretrained", False):       # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
+    if cfg.get(
+        "pretrained", False
+    ):  # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
         cfg = {k: v for k, v in cfg.items() if k not in SCRATCH_ONLY_KEYS}
     out = result_path(name, group, cfg["seed"], results_dir)
     if out.exists() and not RETRAIN:
         run = json.loads(out.read_text())
-        if run["config"] == json.loads(json.dumps(cfg)):      # same configuration (tuples stored as lists)
-            print(f"skip {group}/{name}: best val {run['best_val_acc']:.3f} (already trained)")
+        if run["config"] == json.loads(
+            json.dumps(cfg)
+        ):  # same configuration (tuples stored as lists)
+            print(
+                f"skip {group}/{name}: best val {run['best_val_acc']:.3f} (already trained)"
+            )
             return run
-        print(f"{group}/{name}: configuration changed since the stored run, training again")
+        print(
+            f"{group}/{name}: configuration changed since the stored run, training again"
+        )
 
     print(f"### {group}/{name}")
-    print("    " + " | ".join(f"{k} {cfg[k]}" for k in ("lr", "weight_decay", "label_smoothing", "dropout",
-                                                        "random_erasing", "augment", "crop_scale", "seed", "epochs"))
-          + f" | schedule {cfg.get('schedule', 'cosine')}")
+    print(
+        "    "
+        + " | ".join(
+            f"{k} {cfg[k]}"
+            for k in (
+                "lr",
+                "weight_decay",
+                "label_smoothing",
+                "dropout",
+                "random_erasing",
+                "augment",
+                "crop_scale",
+                "seed",
+                "epochs",
+            )
+        )
+        + f" | schedule {cfg.get('schedule', 'cosine')}"
+    )
     arch = {k: cfg.get(k) for k in ARCH_KEYS}
     if SHOW_SUMMARY and arch != _last_arch:
         print(show_summary(cfg))
@@ -864,36 +1036,59 @@ def run_experiment(name, group, note="", results_dir=None, **overrides):
     model, hist, best_epoch, diverged = fit(cfg, data)
     minutes = (time.time() - t0) / 60
     if best_epoch:
-        test_loss, test_acc, test_pred = evaluate(model, data["test"], data, cfg, return_preds=True)
-    else:   # diverged before the first validation: there is no checkpoint to test
+        test_loss, test_acc, test_pred = evaluate(
+            model, data["test"], data, cfg, return_preds=True
+        )
+    else:  # diverged before the first validation: there is no checkpoint to test
         test_loss, test_acc, test_pred = float("nan"), float("nan"), []
 
     cpu_model = build_model(cfg, N_CLASSES)
     run = dict(
-        name=name, group=group, seed=cfg["seed"], note=note, config=cfg, history=hist,
-        best_val_acc=max(hist["val_acc"], default=0.0), best_epoch=best_epoch,
+        name=name,
+        group=group,
+        seed=cfg["seed"],
+        note=note,
+        config=cfg,
+        history=hist,
+        best_val_acc=max(hist["val_acc"], default=0.0),
+        best_epoch=best_epoch,
         final_val_acc=hist["val_acc"][-1] if hist["val_acc"] else 0.0,
         final_train_acc=hist["train_acc"][-1] if hist["train_acc"] else 0.0,
-        test_acc=test_acc, test_loss=test_loss, test_pred=test_pred,
+        test_acc=test_acc,
+        test_loss=test_loss,
+        test_pred=test_pred,
         test_true=data["test"].y.cpu().tolist(),
-        params=count_params(cpu_model), gflops=count_gflops(cpu_model, cfg["img_size"]),
-        minutes=minutes, device=torch.cuda.get_device_name() if AMP else str(DEVICE), diverged=diverged,
+        params=count_params(cpu_model),
+        gflops=count_gflops(cpu_model, cfg["img_size"]),
+        minutes=minutes,
+        device=torch.cuda.get_device_name() if AMP else str(DEVICE),
+        diverged=diverged,
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(run))
-    print(f"{name}: best val {run['best_val_acc']:.3f} (epoch {best_epoch}) | test {test_acc:.3f} | {minutes:.1f} min")
+    print(
+        f"{name}: best val {run['best_val_acc']:.3f} (epoch {best_epoch}) | test {test_acc:.3f} | {minutes:.1f} min"
+    )
     return run
 
 
 def load_group(group, results_dir=None):
-    runs = [json.loads(p.read_text()) for p in sorted(((results_dir or RESULTS_DIR) / group).glob("*.json"))]
+    runs = [
+        json.loads(p.read_text())
+        for p in sorted(((results_dir or RESULTS_DIR) / group).glob("*.json"))
+    ]
     return {r["name"]: r for r in runs}
 
 
 def sweep_runs(runs, name):
     # The seed-42 runs of one configuration of the sweep, keyed by learning rate.
-    return {r["config"]["lr"]: r for n, r in runs.items()
-            if n.startswith(f"{name}_lr") and r["config"]["lr"] in LR_SWEEP and r["seed"] == SEEDS[0]}
+    return {
+        r["config"]["lr"]: r
+        for n, r in runs.items()
+        if n.startswith(f"{name}_lr")
+        and r["config"]["lr"] in LR_SWEEP
+        and r["seed"] == SEEDS[0]
+    }
 
 
 def best_of(runs, name):
@@ -908,7 +1103,9 @@ def run_sweep(name, group, note="", **overrides):
     for lr in LR_SWEEP:
         run_experiment(f"{name}_lr{lr:g}", group, note=note, **{**overrides, "lr": lr})
     best = best_of(load_group(group), name)
-    print(f"==> {name}: best lr {best['config']['lr']:g} | val {best['best_val_acc']:.3f} | test {best['test_acc']:.3f}\n")
+    print(
+        f"==> {name}: best lr {best['config']['lr']:g} | val {best['best_val_acc']:.3f} | test {best['test_acc']:.3f}\n"
+    )
     return best
 
 
@@ -916,7 +1113,13 @@ def run_seeds(name, group, note="", **overrides):
     # The other seeds, at the learning rate that won the sweep of this configuration.
     lr = best_of(load_group(group), name)["config"]["lr"]
     for seed in SEEDS[1:]:
-        run_experiment(f"{name}_lr{lr:g}_s{seed}", f"{group}_seeds", note=note, seed=seed, **{**overrides, "lr": lr})
+        run_experiment(
+            f"{name}_lr{lr:g}_s{seed}",
+            f"{group}_seeds",
+            note=note,
+            seed=seed,
+            **{**overrides, "lr": lr},
+        )
 
 
 def seed_runs(name, group):
@@ -925,7 +1128,11 @@ def seed_runs(name, group):
     if best is None:
         return []
     lr, others = best["config"]["lr"], load_group(f"{group}_seeds")
-    return [best] + [others[f"{name}_lr{lr:g}_s{s}"] for s in SEEDS[1:] if f"{name}_lr{lr:g}_s{s}" in others]
+    return [best] + [
+        others[f"{name}_lr{lr:g}_s{s}"]
+        for s in SEEDS[1:]
+        if f"{name}_lr{lr:g}_s{s}" in others
+    ]
 
 
 def seed_mean(runs, key="best_val_acc"):
@@ -933,7 +1140,9 @@ def seed_mean(runs, key="best_val_acc"):
 
 
 def seed_std(runs, key="best_val_acc"):
-    return float(np.std([r[key] for r in runs], ddof=1)) if len(runs) > 1 else float("nan")
+    return (
+        float(np.std([r[key] for r in runs], ddof=1)) if len(runs) > 1 else float("nan")
+    )
 
 
 def finalists(n=TUNE_N):
@@ -960,14 +1169,18 @@ def random_configs():
         if key not in seen:
             seen.add(key)
             if cfg["schedule"] == "cosine":
-                del cfg["schedule"]            # cosine is the default: keep the stored config minimal
+                del cfg[
+                    "schedule"
+                ]  # cosine is the default: keep the stored config minimal
             configs.append(cfg)
     return configs
 
 
 def run_overrides(run):
     # The overrides that reproduce a stored run (everything but its name, group and seed).
-    return {k: v for k, v in run["config"].items() if k not in ("name", "group", "seed")}
+    return {
+        k: v for k, v in run["config"].items() if k not in ("name", "group", "seed")
+    }
 
 
 def tuning_runs(name):
@@ -977,7 +1190,9 @@ def tuning_runs(name):
 
 
 def best_grid_point(name):
-    grid = {n: r for n, r in load_group("tune_grid").items() if n.startswith(name + "_")}
+    grid = {
+        n: r for n, r in load_group("tune_grid").items() if n.startswith(name + "_")
+    }
     if len(grid) < len(TUNE_LRS) * len(TUNE_WDS):
         return None
     best = max(grid.values(), key=lambda r: r["best_val_acc"])
@@ -993,8 +1208,15 @@ def top_configs(name):
 def confirmed(name):
     # {run name: [seed 42, 43, 44]} for the TOP_K configurations of one network.
     seeds = load_group("tune_seeds")
-    return {r["name"]: [r] + [seeds[f"{r['name']}_s{s}"] for s in SEEDS[1:] if f"{r['name']}_s{s}" in seeds]
-            for r in top_configs(name)}
+    return {
+        r["name"]: [r]
+        + [
+            seeds[f"{r['name']}_s{s}"]
+            for s in SEEDS[1:]
+            if f"{r['name']}_s{s}" in seeds
+        ]
+        for r in top_configs(name)
+    }
 
 
 def best_tuned(name):
@@ -1009,7 +1231,12 @@ def best_tuned(name):
 def long_runs(name):
     # The longer trainings of one network, over the seeds.
     group = load_group("long")
-    return [group[f"{name}_ep{LONG_EPOCHS}_s{s}"] for s in SEEDS if f"{name}_ep{LONG_EPOCHS}_s{s}" in group]
+    return [
+        group[f"{name}_ep{LONG_EPOCHS}_s{s}"]
+        for s in SEEDS
+        if f"{name}_ep{LONG_EPOCHS}_s{s}" in group
+    ]
+
 
 # %% [markdown]
 # ## The ladder: s0 -> s4
@@ -1138,8 +1365,12 @@ else:
     for name in names:
         for lr in TUNE_LRS:
             for wd in TUNE_WDS:
-                run_experiment(f"{name}_lr{lr:g}_wd{wd:g}", "tune_grid", note="tuning: lr x wd",
-                               **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd})
+                run_experiment(
+                    f"{name}_lr{lr:g}_wd{wd:g}",
+                    "tune_grid",
+                    note="tuning: lr x wd",
+                    **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd},
+                )
         lr, wd = best_grid_point(name)
         print(f"==> {name}: best lr {lr:g}, weight decay {wd:g}\n")
 
@@ -1152,8 +1383,12 @@ for i, c in enumerate(configs):
 for name in finalists(TUNE_N):
     lr, wd = best_grid_point(name)
     for i, c in enumerate(configs):
-        run_experiment(f"{name}_cfg{i:02d}", "tune_random", note="tuning: random search",
-                       **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd, **c})
+        run_experiment(
+            f"{name}_cfg{i:02d}",
+            "tune_random",
+            note="tuning: random search",
+            **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd, **c},
+        )
 
 # %%
 # [run]
@@ -1161,8 +1396,12 @@ for name in finalists(TUNE_N):
 for name in finalists(TUNE_N):
     for run in top_configs(name):
         for seed in SEEDS[1:]:
-            run_experiment(f"{run['name']}_s{seed}", "tune_seeds", note="tuning: seeds",
-                           **{**run_overrides(run), "seed": seed})
+            run_experiment(
+                f"{run['name']}_s{seed}",
+                "tune_seeds",
+                note="tuning: seeds",
+                **{**run_overrides(run), "seed": seed},
+            )
 
 # %% [markdown]
 # ## Longer training
@@ -1187,8 +1426,12 @@ for name in finalists(TUNE_N):
     cfg_name, runs = best
     print(f"{name}: {cfg_name}, {LONG_EPOCHS} epochs")
     for seed in SEEDS:
-        run_experiment(f"{name}_ep{LONG_EPOCHS}_s{seed}", "long", note=f"{cfg_name}, {LONG_EPOCHS} epochs",
-                       **{**run_overrides(runs[0]), "epochs": LONG_EPOCHS, "seed": seed})
+        run_experiment(
+            f"{name}_ep{LONG_EPOCHS}_s{seed}",
+            "long",
+            note=f"{cfg_name}, {LONG_EPOCHS} epochs",
+            **{**run_overrides(runs[0]), "epochs": LONG_EPOCHS, "seed": seed},
+        )
 
 # %% [markdown]
 # ## Results
@@ -1197,32 +1440,93 @@ for name in finalists(TUNE_N):
 
 # %%
 # Categorical colours in a fixed order (one per run inside a plot)
-COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
-plt.rcParams.update({"axes.prop_cycle": plt.cycler(color=COLORS), "lines.linewidth": 2,
-                     "axes.grid": True, "grid.alpha": 0.3, "axes.spines.top": False, "axes.spines.right": False})
+COLORS = [
+    "#2a78d6",
+    "#eb6834",
+    "#1baf7a",
+    "#eda100",
+    "#e87ba4",
+    "#008300",
+    "#6250d6",
+    "#e34948",
+]
+plt.rcParams.update(
+    {
+        "axes.prop_cycle": plt.cycler(color=COLORS),
+        "lines.linewidth": 2,
+        "axes.grid": True,
+        "grid.alpha": 0.3,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    }
+)
 
 
 def summary(runs):
     # One row per run (single seed).
-    rows = [dict(run=n, lr=r["config"]["lr"], params_M=r["params"] / 1e6, best_val=r["best_val_acc"],
-                 best_epoch=r["best_epoch"], final_train=r["final_train_acc"],
-                 gap=r["final_train_acc"] - r["final_val_acc"], test=r["test_acc"], minutes=r["minutes"])
-            for n, r in runs.items()]
-    return pd.DataFrame(rows).set_index("run").style.format(
-        {"lr": "{:g}", "params_M": "{:.2f}", "best_val": "{:.3f}", "final_train": "{:.3f}", "gap": "{:+.3f}",
-         "test": "{:.3f}", "minutes": "{:.1f}"})
+    rows = [
+        dict(
+            run=n,
+            lr=r["config"]["lr"],
+            params_M=r["params"] / 1e6,
+            best_val=r["best_val_acc"],
+            best_epoch=r["best_epoch"],
+            final_train=r["final_train_acc"],
+            gap=r["final_train_acc"] - r["final_val_acc"],
+            test=r["test_acc"],
+            minutes=r["minutes"],
+        )
+        for n, r in runs.items()
+    ]
+    return (
+        pd.DataFrame(rows)
+        .set_index("run")
+        .style.format(
+            {
+                "lr": "{:g}",
+                "params_M": "{:.2f}",
+                "best_val": "{:.3f}",
+                "final_train": "{:.3f}",
+                "gap": "{:+.3f}",
+                "test": "{:.3f}",
+                "minutes": "{:.1f}",
+            }
+        )
+    )
 
 
 def seed_summary(groups):
     # One row per configuration, mean ± std over the seeds. groups: {label: [runs]}
-    rows = [dict(run=label, lr=runs[0]["config"]["lr"], seeds=len(runs), params_M=runs[0]["params"] / 1e6,
-                 val_mean=seed_mean(runs), val_std=seed_std(runs),
-                 test_mean=seed_mean(runs, "test_acc"), test_std=seed_std(runs, "test_acc"),
-                 train_mean=seed_mean(runs, "final_train_acc"))
-            for label, runs in groups.items() if runs]
-    return pd.DataFrame(rows).set_index("run").style.format(
-        {"lr": "{:g}", "params_M": "{:.2f}", "val_mean": "{:.3f}", "val_std": "{:.3f}", "test_mean": "{:.3f}",
-         "test_std": "{:.3f}", "train_mean": "{:.3f}"})
+    rows = [
+        dict(
+            run=label,
+            lr=runs[0]["config"]["lr"],
+            seeds=len(runs),
+            params_M=runs[0]["params"] / 1e6,
+            val_mean=seed_mean(runs),
+            val_std=seed_std(runs),
+            test_mean=seed_mean(runs, "test_acc"),
+            test_std=seed_std(runs, "test_acc"),
+            train_mean=seed_mean(runs, "final_train_acc"),
+        )
+        for label, runs in groups.items()
+        if runs
+    ]
+    return (
+        pd.DataFrame(rows)
+        .set_index("run")
+        .style.format(
+            {
+                "lr": "{:g}",
+                "params_M": "{:.2f}",
+                "val_mean": "{:.3f}",
+                "val_std": "{:.3f}",
+                "test_mean": "{:.3f}",
+                "test_std": "{:.3f}",
+                "train_mean": "{:.3f}",
+            }
+        )
+    )
 
 
 def plot_curves(runs, title=""):
@@ -1237,11 +1541,21 @@ def plot_curves(runs, title=""):
             axes[0].plot(r["best_epoch"], r["best_val_acc"], "o", color=c, markersize=7)
         axes[1].plot(ep, h["val_loss"], color=c, label=name)
         axes[2].plot(ep, h["train_acc"], color=c, label=name)
-    for ax, t in zip(axes, ("validation accuracy (dot = best epoch)", "validation loss (plain CE)",
-                            "training accuracy")):
-        ax.set_title(t); ax.set_xlabel("epoch")
+    for ax, t in zip(
+        axes,
+        (
+            "validation accuracy (dot = best epoch)",
+            "validation loss (plain CE)",
+            "training accuracy",
+        ),
+    ):
+        ax.set_title(t)
+        ax.set_xlabel("epoch")
     axes[0].legend(fontsize=8)
-    fig.suptitle(title); plt.tight_layout(); plt.show()
+    fig.suptitle(title)
+    plt.tight_layout()
+    plt.show()
+
 
 # %% [markdown]
 # ### The ladder
@@ -1263,13 +1577,35 @@ if steps:
     names = list(steps)
     xs = np.arange(len(names))
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.bar(xs - 0.2, [steps[n]["best_val_acc"] for n in names], 0.38, label="val (best epoch)", color=COLORS[0])
-    ax.bar(xs + 0.2, [steps[n]["test_acc"] for n in names], 0.38, label="test", color=COLORS[1])
+    ax.bar(
+        xs - 0.2,
+        [steps[n]["best_val_acc"] for n in names],
+        0.38,
+        label="val (best epoch)",
+        color=COLORS[0],
+    )
+    ax.bar(
+        xs + 0.2,
+        [steps[n]["test_acc"] for n in names],
+        0.38,
+        label="test",
+        color=COLORS[1],
+    )
     for x_, n in zip(xs, names):
-        ax.text(x_ - 0.2, steps[n]["best_val_acc"] + 0.01, f"{steps[n]['best_val_acc']:.2f}", ha="center", fontsize=8)
-    ax.set_xticks(xs, names); ax.set_ylabel("accuracy"); ax.axhline(0.5, ls="--", c="gray", lw=1)
-    ax.legend(); ax.set_title("the ladder: each step adds one change, at its best learning rate")
-    plt.tight_layout(); plt.show()
+        ax.text(
+            x_ - 0.2,
+            steps[n]["best_val_acc"] + 0.01,
+            f"{steps[n]['best_val_acc']:.2f}",
+            ha="center",
+            fontsize=8,
+        )
+    ax.set_xticks(xs, names)
+    ax.set_ylabel("accuracy")
+    ax.axhline(0.5, ls="--", c="gray", lw=1)
+    ax.legend()
+    ax.set_title("the ladder: each step adds one change, at its best learning rate")
+    plt.tight_layout()
+    plt.show()
 
     plot_curves(steps, "the ladder")
 
@@ -1288,10 +1624,21 @@ if ladder:
         swept = sweep_runs(ladder, name)
         if swept:
             lrs = sorted(swept)
-            ax.plot(lrs, [swept[lr]["best_val_acc"] for lr in lrs], "o-", color=COLORS[i], label=name, markersize=8)
-    ax.set_xscale("log"); ax.set_xlabel("learning rate"); ax.set_ylabel("best validation accuracy")
-    ax.set_title("every step of the ladder across learning rates"); ax.legend(fontsize=8)
-    plt.tight_layout(); plt.show()
+            ax.plot(
+                lrs,
+                [swept[lr]["best_val_acc"] for lr in lrs],
+                "o-",
+                color=COLORS[i],
+                label=name,
+                markersize=8,
+            )
+    ax.set_xscale("log")
+    ax.set_xlabel("learning rate")
+    ax.set_ylabel("best validation accuracy")
+    ax.set_title("every step of the ladder across learning rates")
+    ax.legend(fontsize=8)
+    plt.tight_layout()
+    plt.show()
 
 # %% [markdown]
 # ### Depth x residual
@@ -1315,20 +1662,37 @@ if grid_runs:
 
     convs = {n: 3 + 2 * sum(dict(GRID)[n]["blocks"]) for n in grid_runs}
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
-    for kind, label, c in (("plain", "plain", COLORS[1]), ("res", "residual", COLORS[0])):
+    for kind, label, c in (
+        ("plain", "plain", COLORS[1]),
+        ("res", "residual", COLORS[0]),
+    ):
         names = [n for n in grid_runs if n.startswith(kind + "_")]
         if not names:
             continue
         for ax, key in zip(axes, ("best_val_acc", "final_train_acc")):
-            ax.errorbar([convs[n] for n in names], [seed_mean(grid_runs[n], key) for n in names],
-                        yerr=[np.nan_to_num(seed_std(grid_runs[n], key)) for n in names],
-                        fmt="o-", color=c, capsize=4, markersize=8, label=label)
+            ax.errorbar(
+                [convs[n] for n in names],
+                [seed_mean(grid_runs[n], key) for n in names],
+                yerr=[np.nan_to_num(seed_std(grid_runs[n], key)) for n in names],
+                fmt="o-",
+                color=c,
+                capsize=4,
+                markersize=8,
+                label=label,
+            )
     for ax, t in zip(axes, ("best validation accuracy", "final training accuracy")):
-        ax.set_xlabel("convolutional layers"); ax.set_ylabel(t); ax.set_xticks(sorted(set(convs.values())))
-        ax.set_title(f"{t} vs depth (mean ± std over seeds)"); ax.legend()
-    plt.tight_layout(); plt.show()
+        ax.set_xlabel("convolutional layers")
+        ax.set_ylabel(t)
+        ax.set_xticks(sorted(set(convs.values())))
+        ax.set_title(f"{t} vs depth (mean ± std over seeds)")
+        ax.legend()
+    plt.tight_layout()
+    plt.show()
 
-    plot_curves({n: r[0] for n, r in grid_runs.items()}, "depth x residual (seed 42, best learning rate)")
+    plot_curves(
+        {n: r[0] for n, r in grid_runs.items()},
+        "depth x residual (seed 42, best learning rate)",
+    )
 
 # %% [markdown]
 # ### Recipe tuning
@@ -1344,8 +1708,17 @@ grid_runs_t = load_group("tune_grid")
 for name in names:
     runs = {n: r for n, r in grid_runs_t.items() if n.startswith(name + "_")}
     if runs:
-        table = pd.DataFrame({f"wd {wd:g}": {f"lr {lr:g}": runs.get(f"{name}_lr{lr:g}_wd{wd:g}", {}).get("best_val_acc", np.nan)
-                                              for lr in TUNE_LRS} for wd in TUNE_WDS})
+        table = pd.DataFrame(
+            {
+                f"wd {wd:g}": {
+                    f"lr {lr:g}": runs.get(f"{name}_lr{lr:g}_wd{wd:g}", {}).get(
+                        "best_val_acc", np.nan
+                    )
+                    for lr in TUNE_LRS
+                }
+                for wd in TUNE_WDS
+            }
+        )
         print(name)
         display(table.style.format("{:.3f}").highlight_max(axis=None, color="#cde2fb"))
 
@@ -1363,16 +1736,25 @@ configs = random_configs()
 if names and random_runs:
     rows = []
     for i, c in enumerate(configs):
-        row = dict(cfg=f"cfg{i:02d}", label_smoothing=c["label_smoothing"], dropout=c["dropout"],
-                   random_erasing=c["random_erasing"], crop_min=c["crop_scale"][0],
-                   schedule=c.get("schedule", "cosine"))
+        row = dict(
+            cfg=f"cfg{i:02d}",
+            label_smoothing=c["label_smoothing"],
+            dropout=c["dropout"],
+            random_erasing=c["random_erasing"],
+            crop_min=c["crop_scale"][0],
+            schedule=c.get("schedule", "cosine"),
+        )
         for name in names:
             r = random_runs.get(f"{name}_cfg{i:02d}")
             row[name] = r["best_val_acc"] if r else np.nan
         rows.append(row)
     table = pd.DataFrame(rows).set_index("cfg")
     table["mean"] = table[names].mean(axis=1)
-    display(table.sort_values("mean", ascending=False).style.format({n: "{:.3f}" for n in names + ["mean"]}))
+    display(
+        table.sort_values("mean", ascending=False).style.format(
+            {n: "{:.3f}" for n in names + ["mean"]}
+        )
+    )
 
     params = ["label_smoothing", "dropout", "random_erasing", "crop_min", "schedule"]
     fig, axes = plt.subplots(1, len(params), figsize=(18, 3.8), sharey=True)
@@ -1381,11 +1763,19 @@ if names and random_runs:
         for j, name in enumerate(names):
             for k, v in enumerate(values):
                 ys = table.loc[table[p] == v, name].dropna()
-                ax.scatter([k + (j - 1) * 0.12] * len(ys), ys, color=COLORS[j], s=28,
-                           label=name if (p == params[0] and k == 0) else None)
-        ax.set_xticks(range(len(values)), [str(v) for v in values]); ax.set_title(p)
-    axes[0].set_ylabel("best validation accuracy"); axes[0].legend(fontsize=8)
-    plt.tight_layout(); plt.show()
+                ax.scatter(
+                    [k + (j - 1) * 0.12] * len(ys),
+                    ys,
+                    color=COLORS[j],
+                    s=28,
+                    label=name if (p == params[0] and k == 0) else None,
+                )
+        ax.set_xticks(range(len(values)), [str(v) for v in values])
+        ax.set_title(p)
+    axes[0].set_ylabel("best validation accuracy")
+    axes[0].legend(fontsize=8)
+    plt.tight_layout()
+    plt.show()
 
 # %% [markdown]
 # **Confirmation and final choice**: the two best configurations of each network, mean ± standard deviation over
@@ -1411,7 +1801,9 @@ if names and random_runs:
 if names:
     groups, best_per_net = {}, {}
     for name in names:
-        conf = {n: runs for n, runs in confirmed(name).items() if len(runs) == len(SEEDS)}
+        conf = {
+            n: runs for n, runs in confirmed(name).items() if len(runs) == len(SEEDS)
+        }
         for n, runs in conf.items():
             groups[f"{name} | {n.removeprefix(name + '_')}"] = runs
         if conf:
@@ -1424,20 +1816,26 @@ if names:
         ranked = sorted(best_per_net, key=lambda n: -seed_mean(best_per_net[n][1]))
         for n in ranked:
             cfg_name, runs = best_per_net[n]
-            print(f"{n:11s} best config {cfg_name}: val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
-                  f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f}")
+            print(
+                f"{n:11s} best config {cfg_name}: val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
+                f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f}"
+            )
         first, second = ranked[0], ranked[1]
         diff = seed_mean(best_per_net[first][1]) - seed_mean(best_per_net[second][1])
         noise = max(seed_std(best_per_net[first][1]), seed_std(best_per_net[second][1]))
         if diff > noise:
             final = first
-            print(f"-> {first}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})")
+            print(
+                f"-> {first}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})"
+            )
         else:
             final = min((first, second), key=simplicity)
             print(f"-> a tie ({diff:.3f} <= {noise:.3f}): the simpler network, {final}")
         print("final configuration:", run_overrides(best_per_net[final][1][0]))
-        plot_curves({f"{n} ({best_per_net[n][0]})": best_per_net[n][1][0] for n in ranked},
-                    "best tuned configuration of each network (seed 42)")
+        plot_curves(
+            {f"{n} ({best_per_net[n][0]})": best_per_net[n][1][0] for n in ranked},
+            "best tuned configuration of each network (seed 42)",
+        )
 
 # %% [markdown]
 # ### Longer training and the final model
@@ -1488,15 +1886,19 @@ if names and len(long_final) == len(names):
     ranked = sorted(long_final, key=lambda n: -seed_mean(long_final[n]))
     for n in ranked:
         runs = long_final[n]
-        print(f"{n:11s} {LONG_EPOCHS} epochs: val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
-              f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
-              f"train {seed_mean(runs, 'final_train_acc'):.3f}")
+        print(
+            f"{n:11s} {LONG_EPOCHS} epochs: val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
+            f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
+            f"train {seed_mean(runs, 'final_train_acc'):.3f}"
+        )
     first, second = ranked[0], ranked[1]
     diff = seed_mean(long_final[first]) - seed_mean(long_final[second])
     noise = max(seed_std(long_final[first]), seed_std(long_final[second]))
     if diff > noise:
         final = first
-        print(f"-> {first}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})")
+        print(
+            f"-> {first}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})"
+        )
     else:
         final = min((first, second), key=simplicity)
         print(f"-> a tie ({diff:.3f} <= {noise:.3f}): the simpler network, {final}")
@@ -1505,7 +1907,9 @@ if names and len(long_final) == len(names):
     for n in ranked:
         curves[f"{n} | {BASE['epochs']} ep"] = best_tuned(n)[1][0]
         curves[f"{n} | {LONG_EPOCHS} ep"] = long_final[n][0]
-    plot_curves(curves, f"tuned networks: {BASE['epochs']} vs {LONG_EPOCHS} epochs (seed 42)")
+    plot_curves(
+        curves, f"tuned networks: {BASE['epochs']} vs {LONG_EPOCHS} epochs (seed 42)"
+    )
 
 # %% [markdown]
 # ## Ablation of the final model
@@ -1544,7 +1948,9 @@ if names and len(long_final) == len(names):
 # The final model (selected above) and its ablations: each one changes exactly one component of its configuration
 FINAL_NET = globals().get("final")
 ABLATION_GROUP = "ablation"
-ABLATION_LR_CONTROL = 0.01          # lr of the control runs for the components that make training unstable
+ABLATION_LR_CONTROL = (
+    0.01  # lr of the control runs for the components that make training unstable
+)
 
 
 def make_ablations(base):
@@ -1552,22 +1958,28 @@ def make_ablations(base):
     # change `base` (e.g. no_residual on a plain network) are left out.
     channels, blocks = tuple(base["channels"]), tuple(base["blocks"])
     candidates = {
-        "no_batchnorm":       ("architecture", dict(batchnorm=False)),
-        "no_gap":             ("architecture", dict(gap=False)),
-        "no_residual":        ("architecture", dict(residual=False)),
-        "no_stage4":          ("architecture", dict(channels=channels[:3], blocks=blocks[:3])),
-        "shallow":            ("architecture", dict(blocks=(1,) * len(blocks))),
-        "no_augmentation":    ("recipe", dict(augment=False)),
-        "no_erasing":         ("recipe", dict(random_erasing=0.0)),
+        "no_batchnorm": ("architecture", dict(batchnorm=False)),
+        "no_gap": ("architecture", dict(gap=False)),
+        "no_residual": ("architecture", dict(residual=False)),
+        "no_stage4": ("architecture", dict(channels=channels[:3], blocks=blocks[:3])),
+        "shallow": ("architecture", dict(blocks=(1,) * len(blocks))),
+        "no_augmentation": ("recipe", dict(augment=False)),
+        "no_erasing": ("recipe", dict(random_erasing=0.0)),
         "no_label_smoothing": ("recipe", dict(label_smoothing=0.0)),
-        "no_weight_decay":    ("recipe", dict(weight_decay=0.0)),
-        "cosine":             ("recipe", dict(schedule="cosine")),
-        "no_batchnorm_lr0.01": ("control", dict(batchnorm=False, lr=ABLATION_LR_CONTROL)),
-        "no_gap_lr0.01":       ("control", dict(gap=False, lr=ABLATION_LR_CONTROL)),
+        "no_weight_decay": ("recipe", dict(weight_decay=0.0)),
+        "cosine": ("recipe", dict(schedule="cosine")),
+        "no_batchnorm_lr0.01": (
+            "control",
+            dict(batchnorm=False, lr=ABLATION_LR_CONTROL),
+        ),
+        "no_gap_lr0.01": ("control", dict(gap=False, lr=ABLATION_LR_CONTROL)),
     }
-    same = lambda a, b: json.dumps(a) == json.dumps(b)      # tuples and lists compare equal
-    return {n: (kind, over) for n, (kind, over) in candidates.items()
-            if any(not same(base.get(k), v) for k, v in over.items())}
+    same = lambda a, b: json.dumps(a) == json.dumps(b)  # tuples and lists compare equal
+    return {
+        n: (kind, over)
+        for n, (kind, over) in candidates.items()
+        if any(not same(base.get(k), v) for k, v in over.items())
+    }
 
 
 if FINAL_NET is None or not long_runs(FINAL_NET):
@@ -1576,7 +1988,9 @@ if FINAL_NET is None or not long_runs(FINAL_NET):
 else:
     ABLATION_BASE = run_overrides(long_runs(FINAL_NET)[0])
     ABLATIONS = make_ablations(ABLATION_BASE)
-    print(f"final model: {FINAL_NET}, {ABLATION_BASE['epochs']} epochs, lr {ABLATION_BASE['lr']:g}")
+    print(
+        f"final model: {FINAL_NET}, {ABLATION_BASE['epochs']} epochs, lr {ABLATION_BASE['lr']:g}"
+    )
     for name, (kind, over) in ABLATIONS.items():
         print(f"{name:22s} {kind:13s} {over}")
 
@@ -1584,8 +1998,12 @@ else:
 # [run]
 for name, (kind, over) in ABLATIONS.items():
     for seed in SEEDS:
-        run_experiment(f"{name}_s{seed}", ABLATION_GROUP, note=f"ablation: {name}",
-                       **{**ABLATION_BASE, **over, "seed": seed})
+        run_experiment(
+            f"{name}_s{seed}",
+            ABLATION_GROUP,
+            note=f"ablation: {name}",
+            **{**ABLATION_BASE, **over, "seed": seed},
+        )
 
 # %% [markdown]
 # ### Results of the ablation
@@ -1593,6 +2011,7 @@ for name, (kind, over) in ABLATIONS.items():
 # Mean ± standard deviation over three seeds, each ablated network against the full model (the longer training of the
 # final network, same seeds). Runs that diverged before the first validation have no checkpoint and are left out of the
 # means (`diverged` counts them).
+
 
 # %%
 def ablation_table():
@@ -1608,33 +2027,91 @@ def ablation_table():
 
     def stats(rs, key):
         v = np.array([r[key] for r in rs if r["best_epoch"] > 0], dtype=float)
-        return (v.mean(), v.std(ddof=1) if len(v) > 1 else np.nan) if len(v) else (np.nan, np.nan)
+        return (
+            (v.mean(), v.std(ddof=1) if len(v) > 1 else np.nan)
+            if len(v)
+            else (np.nan, np.nan)
+        )
 
-    ref_val, ref_test = stats(groups["full model"][2], "best_val_acc"), stats(groups["full model"][2], "test_acc")
+    ref_val, ref_test = (
+        stats(groups["full model"][2], "best_val_acc"),
+        stats(groups["full model"][2], "test_acc"),
+    )
     rows = []
     for name, (kind, over, rs) in groups.items():
         val, test = stats(rs, "best_val_acc"), stats(rs, "test_acc")
-        train, gap = stats(rs, "final_train_acc")[0], np.nanmean([r["final_train_acc"] - r["final_val_acc"] for r in rs])
+        train, gap = (
+            stats(rs, "final_train_acc")[0],
+            np.nanmean([r["final_train_acc"] - r["final_val_acc"] for r in rs]),
+        )
         noise = np.nanmax([val[1], ref_val[1]])
-        rows.append(dict(
-            run=name, kind=kind, change=", ".join(f"{k}={v}" for k, v in over.items()), lr=rs[0]["config"]["lr"],
-            params_M=rs[0]["params"] / 1e6, seeds=len(rs), diverged=f"{sum(r['diverged'] for r in rs)}/{len(rs)}",
-            val_mean=val[0], val_std=val[1], d_val=val[0] - ref_val[0],
-            test_mean=test[0], test_std=test[1], d_test=test[0] - ref_test[0],
-            train=train, gap=gap,
-            beyond_noise=("" if name == "full model" else "yes" if ref_val[0] - val[0] > noise else "no")))
+        rows.append(
+            dict(
+                run=name,
+                kind=kind,
+                change=", ".join(f"{k}={v}" for k, v in over.items()),
+                lr=rs[0]["config"]["lr"],
+                params_M=rs[0]["params"] / 1e6,
+                seeds=len(rs),
+                diverged=f"{sum(r['diverged'] for r in rs)}/{len(rs)}",
+                val_mean=val[0],
+                val_std=val[1],
+                d_val=val[0] - ref_val[0],
+                test_mean=test[0],
+                test_std=test[1],
+                d_test=test[0] - ref_test[0],
+                train=train,
+                gap=gap,
+                beyond_noise=(
+                    ""
+                    if name == "full model"
+                    else "yes"
+                    if ref_val[0] - val[0] > noise
+                    else "no"
+                ),
+            )
+        )
     return pd.DataFrame(rows).set_index("run")
 
 
 def style_ablation(table):
-    return (table.rename(columns={"d_val": "Δ val", "d_test": "Δ test", "val_mean": "val", "val_std": "± val",
-                                  "test_mean": "test", "test_std": "± test", "train": "train acc", "gap": "train-val gap",
-                                  "params_M": "params (M)", "beyond_noise": "beyond noise"})
-            .style.format({"lr": "{:g}", "params (M)": "{:.2f}", "val": "{:.3f}", "± val": "{:.3f}", "Δ val": "{:+.3f}",
-                           "test": "{:.3f}", "± test": "{:.3f}", "Δ test": "{:+.3f}", "train acc": "{:.3f}",
-                           "train-val gap": "{:+.3f}"}, na_rep="-")
-            .background_gradient(subset=["Δ val", "Δ test"], cmap="RdYlGn", vmin=-0.4, vmax=0.4)
-            .set_properties(subset=pd.IndexSlice["full model", :], **{"font-weight": "bold"}))
+    return (
+        table.rename(
+            columns={
+                "d_val": "Δ val",
+                "d_test": "Δ test",
+                "val_mean": "val",
+                "val_std": "± val",
+                "test_mean": "test",
+                "test_std": "± test",
+                "train": "train acc",
+                "gap": "train-val gap",
+                "params_M": "params (M)",
+                "beyond_noise": "beyond noise",
+            }
+        )
+        .style.format(
+            {
+                "lr": "{:g}",
+                "params (M)": "{:.2f}",
+                "val": "{:.3f}",
+                "± val": "{:.3f}",
+                "Δ val": "{:+.3f}",
+                "test": "{:.3f}",
+                "± test": "{:.3f}",
+                "Δ test": "{:+.3f}",
+                "train acc": "{:.3f}",
+                "train-val gap": "{:+.3f}",
+            },
+            na_rep="-",
+        )
+        .background_gradient(
+            subset=["Δ val", "Δ test"], cmap="RdYlGn", vmin=-0.4, vmax=0.4
+        )
+        .set_properties(
+            subset=pd.IndexSlice["full model", :], **{"font-weight": "bold"}
+        )
+    )
 
 
 ablation = ablation_table() if FINAL_NET is not None and long_runs(FINAL_NET) else None
@@ -1653,38 +2130,80 @@ else:
 # %%
 if ablation is not None:
     full = ablation.loc["full model"]
-    abl = ablation.drop(index="full model").sort_values("d_val", ascending=True)       # the most costly removal on top
+    abl = ablation.drop(index="full model").sort_values(
+        "d_val", ascending=True
+    )  # the most costly removal on top
     kind_color = {"architecture": COLORS[0], "recipe": COLORS[1], "control": COLORS[2]}
     ys = np.arange(len(abl))
 
-    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(17, 0.55 * len(abl) + 3.2), gridspec_kw=dict(width_ratios=[1.35, 1]))
+    fig, (ax, ax2) = plt.subplots(
+        1,
+        2,
+        figsize=(17, 0.55 * len(abl) + 3.2),
+        gridspec_kw=dict(width_ratios=[1.35, 1]),
+    )
     ax.axvspan(-full.val_std, full.val_std, color="gray", alpha=0.18)
-    ax.barh(ys - 0.2, abl.d_val, 0.38, xerr=abl.val_std.fillna(0), color=[kind_color[k] for k in abl.kind],
-            error_kw=dict(lw=1.2, capsize=3))
-    ax.barh(ys + 0.2, abl.d_test, 0.38, xerr=abl.test_std.fillna(0), color=[kind_color[k] for k in abl.kind],
-            alpha=0.45, error_kw=dict(lw=1.2, capsize=3))
+    ax.barh(
+        ys - 0.2,
+        abl.d_val,
+        0.38,
+        xerr=abl.val_std.fillna(0),
+        color=[kind_color[k] for k in abl.kind],
+        error_kw=dict(lw=1.2, capsize=3),
+    )
+    ax.barh(
+        ys + 0.2,
+        abl.d_test,
+        0.38,
+        xerr=abl.test_std.fillna(0),
+        color=[kind_color[k] for k in abl.kind],
+        alpha=0.45,
+        error_kw=dict(lw=1.2, capsize=3),
+    )
     right = max(0.02, np.nanmax(abl.d_val) + 0.02)
     for y, d, t in zip(ys, abl.d_val, abl.d_test):
-        ax.text(right, y, f"val {d:+.3f}\ntest {t:+.3f}", va="center", ha="left", fontsize=8)
+        ax.text(
+            right, y, f"val {d:+.3f}\ntest {t:+.3f}", va="center", ha="left", fontsize=8
+        )
     ax.set_xlim(None, right)
-    ax.set_yticks(ys, abl.index); ax.invert_yaxis(); ax.axvline(0, color="black", lw=1)
+    ax.set_yticks(ys, abl.index)
+    ax.invert_yaxis()
+    ax.axvline(0, color="black", lw=1)
     ax.set_xlabel("accuracy change when the component is removed")
-    ax.set_title(f"ablation of {FINAL_NET}: full model val {full.val_mean:.3f}, test {full.test_mean:.3f}")
+    ax.set_title(
+        f"ablation of {FINAL_NET}: full model val {full.val_mean:.3f}, test {full.test_mean:.3f}"
+    )
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in kind_color.values()]
     band = plt.Rectangle((0, 0), 1, 1, color="gray", alpha=0.18)
-    ax.legend(handles + [band], list(kind_color) + ["seed noise of the full model"], loc="upper center",
-              bbox_to_anchor=(0.5, -0.1), ncol=4, fontsize=8, frameon=False)
+    ax.legend(
+        handles + [band],
+        list(kind_color) + ["seed noise of the full model"],
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.1),
+        ncol=4,
+        fontsize=8,
+        frameon=False,
+    )
 
     lim = [np.nanmin(ablation.val_mean) - 0.03, 1.0]
     ax2.plot([0, 1], [0, 1], "--", color="gray", lw=1)
     for name, row in ablation.iterrows():
         c = "black" if name == "full model" else kind_color[row.kind]
         ax2.scatter(row.train, row.val_mean, color=c, s=70, zorder=3)
-        ax2.annotate(name, (row.train, row.val_mean), textcoords="offset points", xytext=(6, 4), fontsize=8)
-    ax2.set_xlim(max(np.nanmin(ablation.train) - 0.05, 0), 1.0); ax2.set_ylim(*lim)
-    ax2.set_xlabel("final training accuracy"); ax2.set_ylabel("best validation accuracy")
+        ax2.annotate(
+            name,
+            (row.train, row.val_mean),
+            textcoords="offset points",
+            xytext=(6, 4),
+            fontsize=8,
+        )
+    ax2.set_xlim(max(np.nanmin(ablation.train) - 0.05, 0), 1.0)
+    ax2.set_ylim(*lim)
+    ax2.set_xlabel("final training accuracy")
+    ax2.set_ylabel("best validation accuracy")
     ax2.set_title("fit vs generalization (dashed: train = val)")
-    plt.tight_layout(); plt.show()
+    plt.tight_layout()
+    plt.show()
 
 # %% [markdown]
 # Training curves of every ablation (seed 42) against the full model: validation accuracy (solid) and training accuracy
@@ -1697,22 +2216,32 @@ if ablation is not None:
     reference = long_runs(FINAL_NET)[0]
     cols = 4
     rows_ = int(np.ceil(len(names) / cols))
-    fig, axes = plt.subplots(rows_, cols, figsize=(4.6 * cols, 3.4 * rows_), sharey=True, squeeze=False)
+    fig, axes = plt.subplots(
+        rows_, cols, figsize=(4.6 * cols, 3.4 * rows_), sharey=True, squeeze=False
+    )
     for ax, name in zip(axes.ravel(), names):
         r = runs[f"{name}_s{SEEDS[0]}"] if f"{name}_s{SEEDS[0]}" in runs else None
-        for label, run, color in (("full model", reference, COLORS[0]), (name, r, COLORS[1])):
+        for label, run, color in (
+            ("full model", reference, COLORS[0]),
+            (name, r, COLORS[1]),
+        ):
             if run is None or not run["history"]["val_acc"]:
                 continue
             h = run["history"]
             ep = range(1, len(h["val_acc"]) + 1)
             ax.plot(ep, h["val_acc"], color=color, label=label)
             ax.plot(ep, h["train_acc"], color=color, ls="--", lw=1.3)
-        ax.set_title(name, fontsize=10); ax.set_xlabel("epoch"); ax.legend(fontsize=7, loc="lower right")
-    for ax in axes.ravel()[len(names):]:
+        ax.set_title(name, fontsize=10)
+        ax.set_xlabel("epoch")
+        ax.legend(fontsize=7, loc="lower right")
+    for ax in axes.ravel()[len(names) :]:
         ax.axis("off")
     axes[0, 0].set_ylabel("accuracy")
-    fig.suptitle("validation (solid) and training (dashed) accuracy: full model vs ablation, seed 42")
-    plt.tight_layout(); plt.show()
+    fig.suptitle(
+        "validation (solid) and training (dashed) accuracy: full model vs ablation, seed 42"
+    )
+    plt.tight_layout()
+    plt.show()
 
 # %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
@@ -1767,9 +2296,17 @@ FINETUNE = dict(
 best = best_tuned("res_3461")
 if best is not None:
     stored = run_overrides(best[1][0])
-    differences = {k: (stored.get(k), v) for k, v in FINETUNE.items()
-                   if k not in ("pretrained", "epochs") and json.loads(json.dumps(stored.get(k))) != json.loads(json.dumps(v))}
-    print("same recipe as Part 1" if not differences else f"WARNING: differs from Part 1 (part 1, here): {differences}")
+    differences = {
+        k: (stored.get(k), v)
+        for k, v in FINETUNE.items()
+        if k not in ("pretrained", "epochs")
+        and json.loads(json.dumps(stored.get(k))) != json.loads(json.dumps(v))
+    }
+    print(
+        "same recipe as Part 1"
+        if not differences
+        else f"WARNING: differs from Part 1 (part 1, here): {differences}"
+    )
 
 show_summary({**BASE, **FINETUNE})
 
@@ -1782,8 +2319,14 @@ show_summary({**BASE, **FINETUNE})
 # %%
 # [run]
 for seed in SEEDS:
-    run_experiment(f"resnet18_ft_s{seed}", "finetune", note="hyperparameters of part 1", results_dir=RESULTS_DIR_2A,
-                   seed=seed, **FINETUNE)
+    run_experiment(
+        f"resnet18_ft_s{seed}",
+        "finetune",
+        note="hyperparameters of part 1",
+        results_dir=RESULTS_DIR_2A,
+        seed=seed,
+        **FINETUNE,
+    )
 
 # %% [markdown]
 # ### Results of 2A
@@ -1793,16 +2336,23 @@ for seed in SEEDS:
 
 # %%
 finetune = load_group("finetune", RESULTS_DIR_2A)
-groups = {"resnet18_ft (pretrained, 2A)": list(finetune.values()),
-          "res_3461 (from scratch, part 1)": long_runs("res_3461")}
+groups = {
+    "resnet18_ft (pretrained, 2A)": list(finetune.values()),
+    "res_3461 (from scratch, part 1)": long_runs("res_3461"),
+}
 groups = {k: v for k, v in groups.items() if v}
 if groups:
     display(seed_summary(groups))
     for label, runs in groups.items():
-        print(f"{label:32s} val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
-              f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
-              f"train {seed_mean(runs, 'final_train_acc'):.3f}")
-    plot_curves({label: runs[0] for label, runs in groups.items()}, "pretrained ResNet-18 vs. from scratch (seed 42)")
+        print(
+            f"{label:32s} val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
+            f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
+            f"train {seed_mean(runs, 'final_train_acc'):.3f}"
+        )
+    plot_curves(
+        {label: runs[0] for label, runs in groups.items()},
+        "pretrained ResNet-18 vs. from scratch (seed 42)",
+    )
 else:
     print("no stored run yet")
 
@@ -1813,7 +2363,10 @@ else:
 # %%
 if finetune:
     display(summary(finetune))
-    plot_curves(finetune, "2A: pretrained ResNet-18 with the hyperparameters of part 1 (3 seeds)")
+    plot_curves(
+        finetune,
+        "2A: pretrained ResNet-18 with the hyperparameters of part 1 (3 seeds)",
+    )
 
 # %% [markdown]
 # ## 2B: tuned fine-tuning
