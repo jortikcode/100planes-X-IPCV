@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.6
 #   kernelspec:
-#     display_name: 100planes-x-ipcv (3.13.5)
+#     display_name: ipcv_task2
 #     language: python
 #     name: python3
 # ---
@@ -118,10 +118,8 @@ print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if DEVICE.type
 # %% [markdown]
 # ### Paths
 #
-# Results and the dataset are kept in the repository (`results/`, `data/`) when the
-# notebook runs locally, and on the temporary disk of the session on Colab. The stored results of the project are then
-# downloaded with `gdown` from the shared Google Drive folder, which holds a copy of the `results` directory: only the
-# files that are not already there, and existing files are never overwritten.
+# Results and the dataset are kept in the repository (`results/`, `data/`) when the notebook runs locally, and on the
+# temporary disk of the session on Colab. The stored results of the project are then downloaded with `gdown` as a single archive (about 2 MB)
 
 # %%
 if IN_COLAB:
@@ -138,63 +136,31 @@ for d in (RESULTS_DIR, RESULTS_DIR_2A, DATA_ROOT):
     d.mkdir(parents=True, exist_ok=True)
 print("results ->", RESULTS_ROOT)
 
-GDRIVE_FOLDER = "https://drive.google.com/drive/folders/1KfN4HcjaVCuXfqei8PaubVUVhffhJan2"  # copy of results/
+RESULTS_ARCHIVE_ID = "1TWAHMvXZ09Bg9gUZplJ3s_uWjsGc_-hk"  # Google Drive file id
 FETCH_RESULTS = True  # False: use only the results already in RESULTS_ROOT
 
 
-def fetch_results(folder_url, dest_root):
-    # List the shared Google Drive folder (a copy of results/) and download with gdown the JSON files that are not in
-    # dest_root yet, never overwriting an existing file.
-    import gdown
+def fetch_results(file_id, dest_root):
+    import gdown, tarfile, tempfile
 
-    files = gdown.download_folder(
-        url=folder_url, skip_download=True, quiet=True, use_cookies=False
-    )
-    added = kept = failed = 0
-    last_error = None
-    for f in tqdm(files, desc="results from Google Drive"):
-        path = Path(f.path)
-        if (
-            path.suffix != ".json"
-            or path.is_absolute()
-            or ".." in path.parts
-            or any(p.startswith(".") for p in path.parts)
-        ):
-            continue
-        target = dest_root / path
-        if target.exists():
-            kept += 1
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            ok = (
-                gdown.download(
-                    id=f.id, output=str(target), quiet=True, use_cookies=False
-                )
-                is not None
-            )
-        except Exception as e:  # e.g. the daily download quota of the file is exceeded
-            ok = False
-            last_error = e
-        failed += not ok
-        added += ok
-    print(
-        f"results from Google Drive: {added} downloaded, {kept} already present"
-        + (
-            f", {failed} FAILED (rerun the cell to retry): {last_error}"
-            if failed
-            else ""
-        )
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = gdown.download(id=file_id, output=f"{tmp}/results.tar.gz", quiet=True, use_cookies=False)
+        if archive is None:
+            raise RuntimeError("download failed")
+        with tarfile.open(archive) as tar:
+            tar.extractall(dest_root, filter="data")
+            n = sum(m.isfile() for m in tar.getmembers())
+    print(f"results from Google Drive: {n} files extracted into {dest_root}")
 
 
 if FETCH_RESULTS:
     try:
-        fetch_results(GDRIVE_FOLDER, RESULTS_ROOT)
+        fetch_results(RESULTS_ARCHIVE_ID, RESULTS_ROOT)
     except Exception as e:
         print(
             f"WARNING: could not download the results from Google Drive ({e}); using the ones already in {RESULTS_ROOT}"
         )
+
 
 # %% [markdown]
 # ### Reproducibility
@@ -2020,7 +1986,7 @@ if ablation is not None:
     )
     for ax, name in zip(axes.ravel(), names):
         r = runs[f"{name}_s{SEEDS[0]}"] if f"{name}_s{SEEDS[0]}" in runs else None
-        for label, run, color in (
+        for curve_name, run, color in (
             ("full model", reference, COLORS[0]),
             (name, r, COLORS[1]),
         ):
@@ -2028,7 +1994,7 @@ if ablation is not None:
                 continue
             h = run["history"]
             ep = range(1, len(h["val_acc"]) + 1)
-            ax.plot(ep, h["val_acc"], color=color, label=label)
+            ax.plot(ep, h["val_acc"], color=color, label=curve_name)
             ax.plot(ep, h["train_acc"], color=color, ls="--", lw=1.3)
         ax.set_title(name, fontsize=10)
         ax.set_xlabel("epoch")
@@ -2199,14 +2165,14 @@ groups = {
 groups = {k: v for k, v in groups.items() if v}
 if groups:
     display(seed_summary(groups))
-    for label, runs in groups.items():
+    for group_name, runs in groups.items():
         print(
-            f"{label:32s} val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
+            f"{group_name:32s} val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
             f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
             f"train {seed_mean(runs, 'final_train_acc'):.3f}"
         )
     plot_curves(
-        {label: runs[0] for label, runs in groups.items()},
+        {group_name: runs[0] for group_name, runs in groups.items()},
         "pretrained ResNet-18 vs. from scratch (seed 42)",
     )
 else:
