@@ -70,20 +70,22 @@
 #
 # **How to run.** The notebook runs top to bottom, locally or on Colab, and needs no access to Google Drive. All the
 # runs reported below are stored in a shared Google Drive folder (a copy of the `results` directory) and the ones
-# missing from the local `results` directory are downloaded automatically with `gdown`: a run whose result already
-# exists with the same configuration is skipped, so the whole notebook, tables and plots included, reproduces our
-# results without training. Setting `RETRAIN = True` trains everything again. If the official dataset server is
-# unavailable, the same archive is downloaded from a Kaggle mirror; if that fails too, the cells that need the images
-# are skipped and the stored results are still loaded and shown. The images are read and preprocessed on the fly
-# (there is no cache), on the CPU. Locally, results are kept in the `results` directory of the repository and the
+# missing from the local `results` directory are downloaded automatically with `gdown`. With `TRAIN = False` (the
+# default) the notebook only loads the stored results and shows its tables and plots: no dataset and no training are
+# needed. With `TRAIN = True` the training cells (final model, ablation, Part 2A) download the dataset and train the
+# runs whose result does not exist yet; `RETRAIN = True` trains them again even if it exists. The images are read and
+# preprocessed on the fly, on the CPU. Locally, results are kept in the `results` directory of the repository and the
 # dataset in its `data` directory (git-ignored, created if missing); on Colab both stay on the temporary disk of the
 # session.
+#
+# **Note.** The stored results were produced with an equivalent pipeline that kept the dataset on the GPU and
+# computed the augmentation on the GPU with mixed precision. The training code of this notebook is the same algorithm
+# with standard torchvision transforms in float32, so retraining gives similar, not identical, numbers.
 
 # %%
-# %pip install -q torchinfo kagglehub gdown
+# %pip install -q gdown
 
 # %%
-import contextlib
 import json
 import math
 import random
@@ -96,7 +98,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchinfo
 from torchvision import datasets
 from torchvision.models import resnet18, ResNet18_Weights
 from torch.utils.data import DataLoader, Dataset
@@ -114,8 +115,8 @@ DEVICE = torch.device(
     else "cpu"
 )
 
-RETRAIN = False  # True: retrain runs even if their JSON already exists
-SHOW_SUMMARY = True  # print the model summary when a run starts with a different architecture than the last one
+TRAIN = False  # True: run the training cells (final model, ablation, Part 2A) and download the dataset
+RETRAIN = False  # True: with TRAIN, retrain the runs whose JSON already exists too
 print(
     f"device: {DEVICE}"
     + (f" ({torch.cuda.get_device_name()})" if DEVICE.type == "cuda" else "")
@@ -368,8 +369,7 @@ for name, over in LADDER + GRID:
 #    network of Part 2 is the exception: it expects the statistics of ImageNet, which `get_data` uses for it.)
 #
 # The images are read and preprocessed on the fly, with no cache. The dataset is always loaded through
-# `torchvision.datasets.FGVCAircraft`; when the official server is unavailable, the same `fgvc-aircraft-2013b` archive is
-# downloaded from a public Kaggle mirror and placed where the torchvision class expects it.
+# `torchvision.datasets.FGVCAircraft`, which downloads it into `data/` the first time.
 #
 # **Augmentation** (training batches only):
 #
@@ -389,64 +389,19 @@ for name, over in LADDER + GRID:
 from functools import cache
 
 BANNER_PX = 20
-KAGGLE_MIRROR = "seryouxblaster764/fgvc-aircraft"  # public copy of the official fgvc-aircraft-2013b archive
+NUM_WORKERS = 4 if IN_COLAB else 0  # DataLoader workers; 0 locally (notebook classes cannot be pickled by spawn)
 IMAGENET_MEAN, IMAGENET_STD = (
     (0.485, 0.456, 0.406),
     (0.229, 0.224, 0.225),
 )  # statistics the pretrained ResNet-18 expects
 
 
-def fetch_from_kaggle(root):
-    # Download the official archive from the Kaggle mirror and place it where torchvision's FGVCAircraft expects it.
-    import kagglehub
-
-    path = Path(kagglehub.dataset_download(KAGGLE_MIRROR))
-    source = next(
-        (
-            p
-            for p in [path, *path.rglob("fgvc-aircraft-2013b")]
-            if (p / "data" / "images").is_dir()
-        ),
-        None,
-    )
-    if source is None:
-        raise RuntimeError(f"unexpected layout of the Kaggle mirror in {path}")
-    target = root / "fgvc-aircraft-2013b"
-    root.mkdir(parents=True, exist_ok=True)
-    if target.is_symlink() or target.exists():
-        if (target / "data" / "images").is_dir():
-            return
-        raise RuntimeError(
-            f"{target} exists but is incomplete: remove it and run again"
-        )
-    target.symlink_to(source, target_is_directory=True)
-
-
-NUM_WORKERS = 4 if IN_COLAB else 0   # DataLoader workers; 0 locally (notebook classes cannot be pickled by spawn)
-
-
 @cache
 def load_split(split):
     # The torchvision dataset of one split, downloaded if needed.
-    try:
-        return datasets.FGVCAircraft(
-            DATA_ROOT, split=split, annotation_level="variant", download=True
-        )
-    except Exception as official_error:
-        # the official server is sometimes unavailable: same archive from the Kaggle mirror, still read by torchvision
-        print(
-            f"official download failed ({official_error}): using the Kaggle mirror {KAGGLE_MIRROR}"
-        )
-        try:
-            fetch_from_kaggle(DATA_ROOT)
-            return datasets.FGVCAircraft(
-                DATA_ROOT, split=split, annotation_level="variant", download=True
-            )
-        except Exception as e:
-            raise RuntimeError(
-                f"could not download FGVC-Aircraft, neither from the official server "
-                f"({official_error}) nor from Kaggle ({e})"
-            ) from e
+    return datasets.FGVCAircraft(
+        DATA_ROOT, split=split, annotation_level="variant", download=True
+    )
 
 
 def preprocess(img, img_size):
@@ -532,17 +487,11 @@ def batches(split, data, cfg, train):
 # Six training images as the network receives them (top) and after crop and flip (bottom).
 
 # %%
-try:
-    data = get_data(BASE["img_size"])
-except Exception as e:
-    data = None
-    print(
-        f"WARNING: the dataset is not available ({e})\n"
-        "The cells that need the images are skipped; the stored results are still loaded and shown."
-    )
-
 N_CLASSES = 100  # FGVC-Aircraft, annotation_level="variant"
-if data is not None:
+data = get_data(BASE["img_size"]) if TRAIN else None   # the dataset is only needed to train (or to show the images)
+if data is None:
+    print("TRAIN = False: the sample images are not shown (they need the dataset)")
+else:
     CLASSES = data["train"].classes
     assert len(CLASSES) == N_CLASSES
     print(
@@ -723,65 +672,10 @@ def count_gflops(model, img_size):
     return 2 * macs / 1e9
 
 
-# %% [markdown]
-# Layer-by-layer summary of one network (`torchinfo`); a summary is also printed at the start of every run whose
-# architecture differs from the previous one (`SHOW_SUMMARY`).
-
 # %%
-# the keys that define the architecture: two runs with the same values build the same network
-ARCH_KEYS = (
-    "img_size",
-    "stem",
-    "channels",
-    "blocks",
-    "batchnorm",
-    "gap",
-    "residual",
-    "dropout",
-    "pretrained",
-)
-
-
 # the keys that only describe AircraftNet: a pretrained run does not store them
 SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual")
 
-
-def show_summary(cfg, depth=4):
-    return torchinfo.summary(
-        build_model(cfg, N_CLASSES),
-        input_size=(1, 3, cfg["img_size"], cfg["img_size"]),
-        col_names=("output_size", "num_params"),
-        row_settings=("var_names",),
-        depth=depth,
-        device="cpu",
-        verbose=0,
-    )
-
-
-show_summary({**BASE, **dict(GRID)["res_2222"]})
-
-# %% [markdown]
-# Size and cost of every configuration. `head_share` is the fraction of the parameters in the classifier: with the
-# flatten head (s0, s1) it holds 81% of the network.
-
-# %%
-rows = []
-for name, over in LADDER + GRID:
-    cfg = {**BASE, **over}
-    m = AircraftNet(cfg, N_CLASSES)
-    head = sum(p.numel() for p in m.head.parameters())
-    rows.append(
-        dict(
-            run=name,
-            params_M=count_params(m) / 1e6,
-            head_share=head / count_params(m),
-            GFLOPs=count_gflops(m, cfg["img_size"]),
-            convs=sum(isinstance(l, nn.Conv2d) for l in m.modules()),
-        )
-    )
-pd.DataFrame(rows).set_index("run").style.format(
-    {"params_M": "{:.2f}", "head_share": "{:.0%}", "GFLOPs": "{:.2f}"}
-)
 
 # %% [markdown]
 # ## Training
@@ -898,47 +792,12 @@ def fit(cfg, data, verbose=True):
 
 
 # %% [markdown]
-# ### Sanity checks
-#
-# At initialization the loss must be close to ln(100) ≈ 4.61 (a uniform guess over 100 classes), and the network must be
-# able to memorize 100 training images; otherwise the data, the labels or the training step are wrong.
-# These are the first checks of Karpathy's *A Recipe for Training Neural Networks* (2019), cited in lecture 6.
-
-# %%
-if data is None:
-    print("skipped: the dataset is not available")
-else:
-    fix_random(0)
-    cfg = {**BASE, "batchnorm": True}
-    model = AircraftNet(cfg, N_CLASSES).to(DEVICE)
-    x, y = next(batches(data["train"], data, cfg, train=True))
-    with torch.no_grad():
-        print(
-            f"initial loss {F.cross_entropy(model(x), y).item():.3f}  (expected ~{math.log(N_CLASSES):.2f})"
-        )
-
-    # memorize 100 images with Adam, full batch
-    x = torch.stack([data["train"][i][0] for i in range(100)]).to(DEVICE)
-    y = data["train"].y[:100].to(DEVICE)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    model.train()
-    for step in range(150):
-        loss = F.cross_entropy(model(x), y)
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-    model.eval()
-    with torch.no_grad():
-        print(
-            f"tiny subset: train acc {(model(x).argmax(1) == y).float().mean().item():.2f}  (expected ~1.00)"
-        )
-
-# %% [markdown]
 # ## Experiment runner
 #
 # `run_experiment` trains one configuration (in `results/part1`, or in the directory given by `results_dir`), evaluates its best checkpoint on the test split and stores the
-# configuration, the per-epoch curves and the test predictions. `run_sweep` trains a configuration at every learning
-# rate of the sweep (seed 42); `run_seeds` trains it with two more seeds at its best learning rate. Note that the seed-42
+# configuration, the per-epoch curves and the test predictions. The runs of the ladder, of the depth x residual comparison and of the recipe search were obtained by calling it for
+# every configuration at the three learning rates of the sweep (seed 42), and then with two more seeds at the best
+# learning rate. Note that the seed-42
 # run of a configuration is the best of three learning rates, hence slightly optimistic; the two additional seeds are
 # not.
 
@@ -948,11 +807,7 @@ def result_path(name, group, seed, results_dir=None):
     return (results_dir or RESULTS_DIR) / group / f"{name}_seed{seed}.json"
 
 
-_last_arch = None
-
-
 def run_experiment(name, group, note="", results_dir=None, **overrides):
-    global _last_arch
     cfg = {**BASE, **overrides, "name": name, "group": group}
     if cfg.get(
         "pretrained", False
@@ -991,10 +846,6 @@ def run_experiment(name, group, note="", results_dir=None, **overrides):
         )
         + f" | schedule {cfg.get('schedule', 'cosine')}"
     )
-    arch = {k: cfg.get(k) for k in ARCH_KEYS}
-    if SHOW_SUMMARY and arch != _last_arch:
-        print(show_summary(cfg))
-        _last_arch = arch
     fix_random(cfg["seed"])
     data = get_data(cfg["img_size"], cfg.get("pretrained", False))
     t0 = time.time()
@@ -1062,29 +913,6 @@ def best_of(runs, name):
     if len(swept) < len(LR_SWEEP):
         return None
     return max(swept.values(), key=lambda r: r["best_val_acc"])
-
-
-def run_sweep(name, group, note="", **overrides):
-    for lr in LR_SWEEP:
-        run_experiment(f"{name}_lr{lr:g}", group, note=note, **{**overrides, "lr": lr})
-    best = best_of(load_group(group), name)
-    print(
-        f"==> {name}: best lr {best['config']['lr']:g} | val {best['best_val_acc']:.3f} | test {best['test_acc']:.3f}\n"
-    )
-    return best
-
-
-def run_seeds(name, group, note="", **overrides):
-    # The other seeds, at the learning rate that won the sweep of this configuration.
-    lr = best_of(load_group(group), name)["config"]["lr"]
-    for seed in SEEDS[1:]:
-        run_experiment(
-            f"{name}_lr{lr:g}_s{seed}",
-            f"{group}_seeds",
-            note=note,
-            seed=seed,
-            **{**overrides, "lr": lr},
-        )
 
 
 def seed_runs(name, group):
@@ -1221,11 +1049,6 @@ def long_runs(name):
 #   memorized exactly.
 # - **s4, a 4th stage** adds capacity and receptive field once the network is regularized.
 
-# %%
-# [run]
-for name, over in LADDER:
-    run_sweep(name, "ladder", **over)
-
 # %% [markdown]
 # ## Depth x residual
 #
@@ -1248,22 +1071,12 @@ for name, over in LADDER:
 # signature of degradation is in the *training* accuracy: a network that is harder to optimize fits its training set
 # worse, whereas an overfitting one fits it better.
 
-# %%
-# [run]
-for name, over in GRID:
-    run_sweep(name, "depth_residual", **over)
-
 # %% [markdown]
 # ### Seeds
 #
 # Run-to-run variation (initialization, data order, augmentation) is easily 1–2 points on 3,333 validation images,
 # comparable to the differences between several networks. We train every network with two more seeds at its best
 # learning rate and compare means.
-
-# %%
-# [run]
-for name, over in GRID:
-    run_seeds(name, "depth_residual", note="seeds", **over)
 
 # %% [markdown]
 # ## The training recipe
@@ -1319,55 +1132,6 @@ for name, over in GRID:
 # the other parameters, so they are not guaranteed to be jointly optimal with the configuration found by the random
 # search.
 
-# %%
-# [run]
-names = finalists(TUNE_N)
-if names is None:
-    print("train the whole grid with all its seeds first")
-else:
-    print("networks:", names)
-    # 1. grid search: learning rate x weight decay, the other parameters as in RECIPE
-    for name in names:
-        for lr in TUNE_LRS:
-            for wd in TUNE_WDS:
-                run_experiment(
-                    f"{name}_lr{lr:g}_wd{wd:g}",
-                    "tune_grid",
-                    note="tuning: lr x wd",
-                    **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd},
-                )
-        lr, wd = best_grid_point(name)
-        print(f"==> {name}: best lr {lr:g}, weight decay {wd:g}\n")
-
-# %%
-# [run]
-# 2. random search on the other parameters, at the best lr and weight decay of each network
-configs = random_configs()
-for i, c in enumerate(configs):
-    print(f"cfg{i:02d}  {c}")
-for name in finalists(TUNE_N):
-    lr, wd = best_grid_point(name)
-    for i, c in enumerate(configs):
-        run_experiment(
-            f"{name}_cfg{i:02d}",
-            "tune_random",
-            note="tuning: random search",
-            **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd, **c},
-        )
-
-# %%
-# [run]
-# 3. confirmation: the TOP_K best configurations of each network, with the other seeds
-for name in finalists(TUNE_N):
-    for run in top_configs(name):
-        for seed in SEEDS[1:]:
-            run_experiment(
-                f"{run['name']}_s{seed}",
-                "tune_seeds",
-                note="tuning: seeds",
-                **{**run_overrides(run), "seed": seed},
-            )
-
 # %% [markdown]
 # ## Longer training
 #
@@ -1383,19 +1147,27 @@ for name in finalists(TUNE_N):
 
 # %%
 # [run]
-for name in finalists(TUNE_N):
-    best = best_tuned(name)
-    if best is None:
-        print(f"{name}: train the recipe search with all its seeds first")
-        continue
-    cfg_name, runs = best
-    print(f"{name}: {cfg_name}, {LONG_EPOCHS} epochs")
+# The final model: res_3461 with the best configuration of its recipe search (cfg05), trained for LONG_EPOCHS epochs
+FINAL_NAME = "res_3461"
+FINAL_CONFIG = {
+    **dict(GRID)[FINAL_NAME],
+    **RECIPE,
+    "lr": 0.05,
+    "weight_decay": 5e-3,
+    "label_smoothing": 0.2,
+    "dropout": 0.0,
+    "random_erasing": 0.25,
+    "crop_scale": (0.5, 1.0),
+    "schedule": "onecycle",
+    "epochs": LONG_EPOCHS,
+}
+if TRAIN:
     for seed in SEEDS:
         run_experiment(
-            f"{name}_ep{LONG_EPOCHS}_s{seed}",
+            f"{FINAL_NAME}_ep{LONG_EPOCHS}_s{seed}",
             "long",
-            note=f"{cfg_name}, {LONG_EPOCHS} epochs",
-            **{**run_overrides(runs[0]), "epochs": LONG_EPOCHS, "seed": seed},
+            note=f"cfg05, {LONG_EPOCHS} epochs",
+            **{**FINAL_CONFIG, "seed": seed},
         )
 
 # %% [markdown]
@@ -1961,14 +1733,15 @@ else:
 
 # %%
 # [run]
-for name, (kind, over) in ABLATIONS.items():
-    for seed in SEEDS:
-        run_experiment(
-            f"{name}_s{seed}",
-            ABLATION_GROUP,
-            note=f"ablation: {name}",
-            **{**ABLATION_BASE, **over, "seed": seed},
-        )
+if TRAIN:
+    for name, (kind, over) in ABLATIONS.items():
+        for seed in SEEDS:
+            run_experiment(
+                f"{name}_s{seed}",
+                ABLATION_GROUP,
+                note=f"ablation: {name}",
+                **{**ABLATION_BASE, **over, "seed": seed},
+            )
 
 # %% [markdown]
 # ### Results of the ablation
@@ -2273,7 +2046,6 @@ if best is not None:
         else f"WARNING: differs from Part 1 (part 1, here): {differences}"
     )
 
-show_summary({**BASE, **FINETUNE})
 
 # %% [markdown]
 # ### Fine-tuning
@@ -2283,15 +2055,16 @@ show_summary({**BASE, **FINETUNE})
 
 # %%
 # [run]
-for seed in SEEDS:
-    run_experiment(
-        f"resnet18_ft_s{seed}",
-        "finetune",
-        note="hyperparameters of part 1",
-        results_dir=RESULTS_DIR_2A,
-        seed=seed,
-        **FINETUNE,
-    )
+if TRAIN:
+    for seed in SEEDS:
+        run_experiment(
+            f"resnet18_ft_s{seed}",
+            "finetune",
+            note="hyperparameters of part 1",
+            results_dir=RESULTS_DIR_2A,
+            seed=seed,
+            **FINETUNE,
+        )
 
 # %% [markdown]
 # ### Results of 2A
@@ -2320,18 +2093,6 @@ if groups:
     )
 else:
     print("no stored run yet")
-
-# %% [markdown]
-# One row per seed of the fine-tuning: epoch of the best validation accuracy, training accuracy at the last epoch and
-# train-validation gap.
-
-# %%
-if finetune:
-    display(summary(finetune))
-    plot_curves(
-        finetune,
-        "2A: pretrained ResNet-18 with the hyperparameters of part 1 (3 seeds)",
-    )
 
 # %% [markdown]
 # ## 2B: tuned fine-tuning
