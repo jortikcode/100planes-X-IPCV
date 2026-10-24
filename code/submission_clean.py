@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.6
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: 100planes-x-ipcv (3.13.5)
 #     language: python
 #     name: python3
 # ---
@@ -22,48 +22,52 @@
 # Juan Guillermo Jaramillo Saa (0001217725) juan.jaramillosaa@studio.unibo.it
 #
 # Ubalducci Michele (0001226810) michele.ubalducci@studio.unibo.it
-#
-# This notebook contains the whole assignment, one part after the other, and shares the code between the parts: the
-# data pipeline, the training loop, the experiment runner, the storage of the results and the plots are defined once and
-# used by every experiment.
-#
-# | part | content | results |
-# |---|---|---|
-# | **Part 1** | a convolutional network designed and trained from scratch, with ablation study and tuning | `results/part1` |
-# | **Part 2A** | fine-tuning of the pretrained ResNet-18 with the training hyperparameters of the best model of Part 1 | `results/part2A` |
-# | **Part 2B** | fine-tuning with tuned hyperparameters | *to be added* |
 
 # %% [markdown]
 # # Part 1: design your own network
 #
+# ### Contents
+#
+# **Setup and code** (shared by all parts)
+# - [Setup](#setup-shared-by-all-parts) — [Paths](#paths), [Reproducibility](#reproducibility)
+# - [Configuration](#configuration)
+# - [Data](#data)
+# - [The network](#the-network)
+# - [Training](#training) — [Sanity checks](#sanity-checks)
+# - [Experiment runner](#experiment-runner)
+#
+# **Experiments**
+# 1. [From a plain VGG to a residual network: a roadmap](#1-from-a-plain-vgg-to-a-residual-network-a-roadmap)
+#    — results, [sensitivity to the learning rate](#sensitivity-to-the-learning-rate)
+# 2. [Depth and residual connections](#2-depth-and-residual-connections)
+# 3. [The training recipe](#3-the-training-recipe) —
+#    [learning rate and weight decay](#step-1--learning-rate-and-weight-decay),
+#    [random search](#step-2--random-search),
+#    [confirmation with seeds](#step-3--confirmation-with-seeds)
+# 4. [Longer training and the final model](#4-longer-training-and-the-final-model)
+# 5. [Ablation of the final model](#5-ablation-of-the-final-model)
+# 6. [Error analysis of the final model](#6-error-analysis-of-the-final-model)
+#
+# [Conclusions](#conclusions)
+#
 # We train a convolutional network from scratch on the 100 aircraft variants of FGVC-Aircraft, using only PyTorch
-# primitives (`nn.Conv2d`, `nn.BatchNorm2d`, `nn.Linear`, ...). Our goal is not only a good accuracy but a network in
-# which every component is justified by a measurement. We therefore build it as a **ladder**: we start from a plain
-# VGG-style network and change **one design choice at a time**, so that every difference in accuracy has a single
-# cause.
+# primitives (`nn.Conv2d`, `nn.BatchNorm2d`, `nn.Linear`, ...). Our goal is a network in which every component is
+# justified by a measurement, so we build it step by step and let each result motivate the next experiment:
 #
-# | part | what we train | question |
-# |---|---|---|
-# | **ladder** s0 | plain VGG: 3 stages x 1 block, no BatchNorm, flatten head, no augmentation | reference point |
-# | s1 | + BatchNorm after every convolution | does BN improve the network and its tolerance to the learning rate? |
-# | s2 | + global average pooling instead of flatten | is the large flatten head responsible for memorization? |
-# | s3 | + random resized crop and horizontal flip | how much does augmentation limit memorization? |
-# | s4 | + a 4th stage (512 channels) | does more capacity help once the network is regularized? |
-# | **depth x residual** | {plain, residual} x {11, 19, 31 convolutional layers}, three seeds each | do skip connections matter, and more so as depth grows? |
-# | **training recipe** | the three best networks + weight decay, label smoothing, dropout, random erasing, crop size and schedule, tuned by grid search, random search and confirmation with three seeds | which network is best once each one has its own tuned recipe? |
-# | **longer training** | the three tuned networks, same configuration, 150 epochs instead of 70 (three seeds) | does more training help, and which network is final? |
-# | **ablation** | the final network with one component removed at a time and retrained (three seeds) | does every component of the final model contribute to its accuracy? |
+# ![roadmap](attachment:roadmap.png)
 #
-# **Protocol.** All runs share the same budget: 224x224 images, 70 epochs, batch 64, SGD with momentum, 3 warmup
-# epochs followed by cosine decay. Each configuration is trained at three learning rates (0.1, 0.05, 0.01) and
-# represented by the best one, since different networks prefer different learning rates. Weight decay, label
-# smoothing, dropout and random erasing are disabled until the training recipe, so that the ladder and the depth x residual
-# experiment measure the architecture alone. **All choices are made on the validation split; test accuracy is only
-# reported.**
+# 1. **Roadmap.** We start from a plain VGG-style network and add one design choice at a time (BatchNorm, global
+#    average pooling, augmentation, a fourth stage), so that every difference in accuracy has a single cause.
+# 2. **Depth and residual connections.** On top of the last network of the roadmap (which happened to be the best), we compare plain and residual networks of increasing depth.
+# 3. **Training recipe.** The three best networks receive the same hyperparameter search over the regularizers and the learning-rate schedule.
+# 4. **Longer training.** The tuned networks are trained for 150 epochs instead of 70, and the final model is selected.
+# 5. **Ablation.** Every component of the final model is removed in turn, to measure what it contributes.
 #
-# **Result.** The final model is a residual network with 31 convolutional layers (the stage layout of ResNet-34 with a
-# single block in the last stage), trained for 150 epochs with the tuned recipe: **74.0% ± 0.7 validation and
-# 74.2% ± 0.2 test accuracy** (mean ± std over three seeds).
+# All runs use 224×224 images, batch 64 and SGD with momentum 0.9. The roadmap and the depth experiment train every network for 70 epochs at three learning rates and keep the best, since different networks prefer different learning rates. The training recipe then tunes the learning rate together with the other hyperparameters, and the final model and its ablation are trained for 150 epochs. All choices are made on the validation split while the test accuracy is reported but never used to select anything.
+#
+# **Result.** The final model is a residual network with 31 convolutional layers, trained for 150 epochs with the tuned recipe: **74.0% ± 0.7 validation and 74.2% ± 0.2 test accuracy** (mean ± standard deviation over three seeds).
+#
+#
 
 # %% [markdown]
 # ## Setup (shared by all parts)
@@ -83,7 +87,6 @@
 # %pip install -q torchinfo kagglehub gdown
 
 # %%
-import contextlib
 import json
 import math
 import random
@@ -106,21 +109,11 @@ import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
 IN_COLAB = "google.colab" in sys.modules
-DEVICE = torch.device(
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps"
-    if torch.backends.mps.is_available()
-    else "cpu"
-)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 RETRAIN = False  # True: retrain runs even if their JSON already exists
-SHOW_SUMMARY = True  # print the model summary when a run starts with a different architecture than the last one
-print(
-    f"device: {DEVICE}"
-    + (f" ({torch.cuda.get_device_name()})" if DEVICE.type == "cuda" else "")
-    + f" | torch {torch.__version__}"
-)
+print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if DEVICE.type == "cuda" else "")
+      + f" | torch {torch.__version__}")
 
 # %% [markdown]
 # ### Paths
@@ -137,9 +130,7 @@ if IN_COLAB:
 else:
     REPO_DIR = Path.cwd().parent if Path.cwd().name == "code" else Path.cwd()
     RESULTS_ROOT = REPO_DIR / "results"
-    DATA_ROOT = (
-        REPO_DIR / "data"
-    )  # dataset: git-ignored, created if missing
+    DATA_ROOT = REPO_DIR / "data"  # dataset: git-ignored, created if missing
 RESULTS_DIR = RESULTS_ROOT / "part1"
 RESULTS_DIR_2A = RESULTS_ROOT / "part2A"
 
@@ -228,31 +219,22 @@ fix_random(42)
 # %% [markdown]
 # ## Configuration
 #
-# `BASE` holds every fixed choice; each run is `BASE` plus a few overrides.
+# A base configuration holds every choice shared by all runs; each experiment changes only what it studies.
 #
-# | choice | value | motivation |
-# |---|---|---|
-# | resolution | 224 x 224 | see below |
-# | stem | 3x3 s2 (32) -> 3x3 (32) -> 3x3 (64) -> maxpool s2 | see *The network* |
-# | block | two 3x3 convolutions (ResNet "basic block") | the same block becomes residual by adding its input back |
-# | width | 64 -> 128 -> 256 (-> 512) | doubles at every stage while the resolution halves, as in VGG and ResNet |
-# | BatchNorm | after every convolution, before the ReLU, also on the 1x1 projection of a skip; no bias in convolutions followed by BN | standard ResNet placement; BN cancels the bias |
-# | initialization | Kaiming normal (fan_out, ReLU) | keeps activations at a stable scale through depth, which matters most without BN |
-# | optimizer | SGD, momentum 0.9 | optimizer of VGG and ResNet, standard for training CNNs from scratch with a learning-rate schedule (lecture 6) |
-# | learning rate | best of 0.1 / 0.05 / 0.01 on validation; in the training recipe searched jointly with the weight decay | see below |
-# | schedule | 3 warmup epochs, then cosine decay to 0 | with a constant learning rate the accuracy keeps oscillating, so the result depends on when training stops; the decay lets the network settle (Loshchilov & Hutter, ICLR 2017). The warmup avoids large updates while the weights are still random |
-# | epochs | 70 (150 for the final, longer training) | a compromise between convergence and the number of runs the study requires; the selected networks are then trained longer |
-# | regularizers | off in the ladder and in the depth x residual experiment, searched in the training recipe | they belong to the training recipe, not to the architecture |
-#
-# **Resolution.** 224x224 is the standard resolution of ImageNet training (AlexNet, VGG, ResNet) and the resolution of
-# the pretrained ResNet-18 of Part 2, which keeps the two parts comparable. Fine-grained classification often benefits
-# from higher resolutions (e.g. 448px in Lin et al., *Bilinear CNN*, 2015), at a cost that grows with the number of
-# pixels; we keep 224px for the study.
-#
-# **Learning-rate sweep.** The best learning rate depends on the network: without BatchNorm, or with a large flatten
-# head, a network becomes unstable at learning rates that a network with BN and global average pooling handles well.
-# With a single learning rate, a step could look harmful only because that value does not suit it, so we compare every
-# configuration at its own best learning rate. The three log-spaced values (lecture 6) cover both regimes.
+# - **Optimizer: SGD with momentum 0.9** — the optimizer of VGG and ResNet (lecture 3, *SGD with minibatches*; lecture 5).
+# - **Learning-rate sweep.** Each configuration is trained at learning rates 0.1, 0.05 and 0.01 (log-spaced, lecture 6 *Random
+#   hyper-parameters search*) and represented by its best one. The best learning rate depends on the network — without
+#   BatchNorm, or with a large classification head, training becomes unstable at values that a normalized network
+#   handles well — so a single value for every step could make a step look harmful only because the value does not
+#   suit it.
+# - **Schedule: linear warmup for 3 epochs, then cosine decay to zero** (lecture 6, *Learning rate schedule: cosine* and
+#   *warm-up*). A large learning rate makes fast progress but cannot settle into a minimum; decaying it lets the
+#   network settle, and starting low avoids large updates while the weights are still random.
+# - **Budget: 70 epochs, batch 64** — a compromise between convergence and the number of runs the study requires; the
+#   selected networks are trained longer at the end.
+# - **Resolution: 224x224**, the standard resolution of ImageNet training and of the pretrained ResNet-18 of Part 2.
+# - **Regularizers off** (weight decay, label smoothing, dropout, random erasing) until the training recipe, so that the
+#   roadmap and the depth experiment measure the architecture alone.
 
 # %%
 BASE = dict(
@@ -260,10 +242,7 @@ BASE = dict(
     # data
     img_size=224,
     augment=False,
-    crop_scale=(
-        0.5,
-        1.0,
-    ),  # RandomResizedCrop: area of the crop, as a fraction of the image
+    crop_scale=(0.5, 1.0),  # RandomResizedCrop: area of the crop, as a fraction of the image
     # architecture
     stem=(32, 32, 64),
     channels=(64, 128, 256),
@@ -317,10 +296,7 @@ GRID = [
     ("res_1111", dict(S4, blocks=(1, 1, 1, 1), residual=True)),
     ("plain_2222", dict(S4, blocks=(2, 2, 2, 2), residual=False)),  # ResNet-18 layout
     ("res_2222", dict(S4, blocks=(2, 2, 2, 2), residual=True)),
-    (
-        "plain_3461",
-        dict(S4, blocks=(3, 4, 6, 1), residual=False),
-    ),  # ResNet-34 layout, one 512-block
+    ("plain_3461", dict(S4, blocks=(3, 4, 6, 1), residual=False)),  # ResNet-34 layout, one 512-block
     ("res_3461", dict(S4, blocks=(3, 4, 6, 1), residual=True)),
 ]
 
@@ -345,45 +321,22 @@ TOP_K = 2  # best configurations of each network confirmed with the other seeds
 # Longer training: the tuned networks, each with its best configuration, trained for more epochs
 LONG_EPOCHS = 150
 
-for name, over in LADDER + GRID:
-    print(f"{name:12s} {over}")
-
 # %% [markdown]
 # ## Data
 #
-# FGVC-Aircraft (`torchvision.datasets.FGVCAircraft`, `annotation_level="variant"`) has 100 classes and
-# 3,334 / 3,333 / 3,333 images in train / val / test, i.e. **about 33 training images per class**. With so few images a
-# network can memorize the training set long before it learns features that generalize: this is the problem most steps
-# of the ladder address.
+# FGVC-Aircraft (`torchvision.datasets.FGVCAircraft`, `annotation_level="variant"`) has 100 classes and 3,334 / 3,333 / 3,333 images in the training / validation / test splits: about **33 training images per class**. With so few images a network can memorize the training set long before it learns features that generalize, and this is the problem most of the following steps address.
 #
-# **Preprocessing.**
+# ![data pipeline](attachment:data_pipeline.png)
 #
-# 1. We crop the 20-pixel copyright banner at the bottom of every image, so that the network cannot rely on it.
-# 2. We resize every image to 224x224 *without* keeping its aspect ratio. The usual alternative (resize the short side,
-#    crop the centre) cuts the left and right edges, and in this dataset the aircraft typically spans almost the whole
-#    width of the image: a centre crop would remove the nose and the tail, where variants of the same family differ.
-#    Since almost all images share the same landscape aspect ratio (about 3:2), the stretch is the same fixed horizontal
-#    squeeze for every image, in all three splits.
-# 3. We normalize with the per-channel mean and standard deviation of the **training split only**. (The pretrained
-#    network of Part 2 is the exception: it expects the statistics of ImageNet, which `get_data` uses for it.)
+# **Preprocessing** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>
+# ). We then and resize the image to 224x224 *without* keeping the aspect ratio. Normalization uses the per-channel mean and standard deviation of the training split only (the pretrained network of Part 2 is the exception: it expects the statistics of ImageNet).
 #
-# The images are read and preprocessed on the fly, with no cache. The dataset is always loaded through
-# `torchvision.datasets.FGVCAircraft`; when the official server is unavailable, the same `fgvc-aircraft-2013b` archive is
-# downloaded from a public Kaggle mirror and placed where the torchvision class expects it.
+# **Augmentation, on training batches only** (bottom row; lecture 6, *Data augmentation*). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe.
 #
-# **Augmentation** (training batches only):
-#
-# | transformation | when | motivation |
-# |---|---|---|
-# | random resized crop (50–100% of the area, aspect ratio 3:4–4:3) + horizontal flip | from step s3 | the standard augmentation of AlexNet, VGG and ResNet: changes of scale and position, and a mirrored aircraft is still the same aircraft |
-# | random erasing (a random rectangle set to the mean colour) | training recipe | the network cannot rely on a single detail (Zhong et al., AAAI 2020; lecture 6) |
-#
-# We exclude vertical flips and large rotations (upside-down aircraft never occur at test time) and colour jitter
-# (colour mostly encodes the airline livery, not the variant). Mixup, CutMix and TrivialAugment are discussed in the
-# training recipe section.
-#
-# The augmentation is computed per image, on the CPU, with the torchvision transforms `RandomResizedCrop`,
-# `RandomHorizontalFlip` and `RandomErasing`, inside the `DataLoader` that feeds the training loop.
+# **Data loading.** The images are read and preprocessed on the fly by a `DataLoader`; the augmentation uses the
+# torchvision transforms `RandomResizedCrop`, `RandomHorizontalFlip` and `RandomErasing`. The dataset is always loaded
+# through the torchvision class; when its official server is unavailable, the identical `fgvc-aircraft-2013b` archive is
+# downloaded from a public Kaggle mirror and placed where the class expects it.
 
 # %%
 from functools import cache
@@ -528,10 +481,7 @@ def batches(split, data, cfg, train):
         yield x.to(DEVICE), y.to(DEVICE)
 
 
-# %% [markdown]
-# Six training images as the network receives them (top) and after crop and flip (bottom).
-
-# %%
+# %% colab={"base_uri": "https://localhost:8080/", "height": 627, "referenced_widgets": ["56021d40a2a24aeb8e4ce236e7148752", "6bfaa424ab0c4850a6178b86192df164", "56d0fbce688e46be90203013770b34f0", "8fd45dc7b2f34c8b991c5e0c6372b909", "384e443d54af484388c872cd9c651db6", "a5ecdadd79b54812b504fbdb18a9e77a", "02254a46ef3a4539b3e88e2c76de0b54", "3bdf4bc01bd04181857632f348b260b2", "f83a31387aff4eff9ef9ca5018fb8480", "876bf5b0cca245798b08a3e1766fa7b0", "9523291372d048e4bdad61970d4317c5", "d00deb33dced4c739082b3f66fe2f28a", "54644bff45634c01ba9e198d92dda2a3", "c55a9f91ffa4417ca5953e7980538c54", "235f4ce923b34c8fa7a67eb53c9ce437", "f3aa4a0d36b4401dba9f15d53928dd12", "a7be3d6e83bd43c9ab94d446a3a84092", "3be9ba871a9b47a6966b9a407541e07f", "44a0209d1dd24772bba80aaec434ec2b", "24a8fb733b6149f8bed15a6f62f533a3", "63168f7aedf14b8baf77319c63b9e1e8", "f9ccf2160eb34d3a83c04c8123d81006", "18a3bab19b14462b94c01db5d92d4e5a", "3d89a74f9dd24957a44885ee6b678ab7", "7c651a7c0668478584b8a36e77df11e5", "0e5caa1c119d4c25a340b93b9a273426", "842d760ac3fc4f4b88ea9810b87842b3", "ff48c049053b4ab6a5be12897136ee39", "e9c5b8b8a0af4a5c94c7c9921a9f794f", "9dc002e952fa4947b0cc0d5f3fcaefeb", "4ce45873e5b448128bc1e50bcf8c2736", "5809a734924c49dca6fec8b08bcfea63", "08f8bcd48a7f4c799c71e80e8ca1709e"]} id="Mt7nFLOrQLJX" outputId="b731a5fa-81ae-4e7a-f570-21b36df716db"
 try:
     data = get_data(BASE["img_size"])
 except Exception as e:
@@ -549,59 +499,35 @@ if data is not None:
         f"classes: {N_CLASSES} | train {len(data['train'])} | val {len(data['val'])} | test {len(data['test'])}"
     )
 
-    fix_random(0)
-    plain = [preprocess(data["train"].base[i][0], BASE["img_size"]) for i in range(6)]
-    crop_flip = T.Compose([
-        T.RandomResizedCrop(BASE["img_size"], scale=BASE["crop_scale"], ratio=(3 / 4, 4 / 3), antialias=True),
-        T.RandomHorizontalFlip(),
-    ])
-    rows = [plain, [crop_flip(img) for img in plain]]
-    fig, axes = plt.subplots(2, 6, figsize=(15, 5))
-    for r, imgs in enumerate(rows):
-        for c in range(6):
-            axes[r, c].imshow(imgs[c])
-            axes[r, c].axis("off")
-            if r == 0:
-                axes[r, c].set_title(CLASSES[data["train"].y[c]], fontsize=9)
-    axes[0, 0].text(-20, 80, "plain", rotation=90, va="center")
-    axes[1, 0].text(-20, 80, "augmented (from s3)", rotation=90, va="center")
-    plt.tight_layout()
-    plt.show()
 
 # %% [markdown]
 # ## The network
 #
-# A single class covers every configuration:
+# A single network class builds every network of the study from its configuration. In the figure, the components
+# added by a step of the roadmap have the colour of that step in the roadmap chart; $n_1, \dots, n_4$ are the
+# numbers of blocks per stage, varied in section 2:
 #
-# ```
-# blocks = (n1, n2, n3, n4)
+# ![network](attachment:network.png)
 #
-# stem      3x3 s2 -> 3x3 -> 3x3 -> maxpool s2          224 -> 56
-# stage 1   n1 x Block(64)                              56x56
-# stage 2   n2 x Block(128), the first one stride 2     28x28
-# stage 3   n3 x Block(256), the first one stride 2     14x14
-# (stage 4  n4 x Block(512), the first one stride 2      7x7)
-# head      flatten -> linear            (gap=False)
-#           global avg pool -> linear    (gap=True)
-# ```
-#
-# `n x Block(C)` denotes `n` consecutive blocks with `C` output channels. The number of convolutional layers is 3 (stem)
-# plus 2 per block: 9 for s0–s3, 11 for s4, 19 for `[2,2,2,2]`, 31 for `[3,4,6,1]`.
-#
-# **Stem.** We reduce the resolution by 4 before the first stage, as in ResNet (He et al., CVPR 2016) and GoogLeNet
-# (Szegedy et al., CVPR 2015): early layers only detect edges and simple textures, and running the blocks at 56x56
-# instead of 224x224 is 16 times cheaper. Instead of a single 7x7 convolution we use three 3x3 convolutions with 32, 32
-# and 64 channels, the "ResNet-C" stem of He et al. (*Bag of Tricks for Image Classification*, CVPR 2019): the same 7x7
-# receptive field with fewer parameters and two more non-linearities (Simonyan & Zisserman, ICLR 2015). The stem is kept
-# narrow because it runs at the highest resolution.
-#
-# **Block.** A block is two 3x3 convolutions, each followed by BatchNorm when enabled. With `residual=True` the block
-# computes `F(x) + x`: it only has to learn a correction to the identity, and the gradient reaches earlier layers
-# directly through the skip (He et al., 2016). When a block changes resolution or number of channels, the input goes
-# through a 1x1 convolution with BN (projection); otherwise it is added unchanged (identity). Plain networks do not
-# create the projections, so plain and residual versions of a network have almost the same number of parameters.
-# With one block per stage every skip is a projection; identity skips appear from the second block of a stage on.
-
+# - **Stages** (lecture 5, *VGG: deep but regular*, *Stages*). The network is a stem followed by stages of identical blocks;
+#   every stage after the first halves the resolution and doubles the channels. A block is two 3x3 convolutions, which
+#   cover the receptive field of a 5x5 convolution with fewer parameters and one more non-linearity.
+# - **Stem** (lecture 5, *Stem layers*; *Further model tweaks — ResNet-C*). The resolution is reduced by 4 before the first
+#   stage, as in ResNet and GoogLeNet, since early layers detect simple patterns that need no full resolution and the
+#   blocks are 16 times cheaper at 56x56 than at 224x224. As in ResNet-C, the 7x7 convolution of ResNet is replaced by
+#   three 3x3 convolutions (32, 32, 64 channels), the first one with stride 2.
+# - **BatchNorm** (lecture 4, *Batch Norm*; Ioffe & Szegedy, 2015) normalizes the activations of each channel over the batch.
+#   It allows higher learning rates and makes initialization less critical. It is placed after every convolution,
+#   before the ReLU, and the convolutions it follows have no bias.
+# - **Global average pooling** (lecture 5, *Fully-connected classifier vs global average pooling*; Lin et al., 2014) averages
+#   each channel of the last feature map, replacing a flatten layer whose classifier would hold most of the parameters
+#   of the network.
+# - **Residual connections** (lecture 5, *Residual Networks*, *Residual block*, *Skip conn dimensions*; He et al., 2016).
+#   The block computes $F(x) + x$: it only has to learn a correction of the identity, and very deep networks become
+#   trainable. When a block changes resolution or channels, the input goes through a 1x1 convolution with BatchNorm
+#   (projection); otherwise it is added unchanged. Plain networks do not create the projections, so plain and residual
+#   versions of a network have almost the same number of parameters.
+# - **Initialization:** Kaiming normal (He et al., 2015), which keeps the scale of the activations stable through depth.
 
 # %%
 def conv_bn(c_in, c_out, k, stride, bn):
@@ -724,45 +650,25 @@ def count_gflops(model, img_size):
 
 
 # %% [markdown]
-# Layer-by-layer summary of one network (`torchinfo`); a summary is also printed at the start of every run whose
-# architecture differs from the previous one (`SHOW_SUMMARY`).
+# Layer-by-layer summary of one network (`torchinfo`).
 
 # %%
-# the keys that define the architecture: two runs with the same values build the same network
-ARCH_KEYS = (
-    "img_size",
-    "stem",
-    "channels",
-    "blocks",
-    "batchnorm",
-    "gap",
-    "residual",
-    "dropout",
-    "pretrained",
-)
-
-
 # the keys that only describe AircraftNet: a pretrained run does not store them
 SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual")
 
-
-def show_summary(cfg, depth=4):
-    return torchinfo.summary(
-        build_model(cfg, N_CLASSES),
-        input_size=(1, 3, cfg["img_size"], cfg["img_size"]),
-        col_names=("output_size", "num_params"),
-        row_settings=("var_names",),
-        depth=depth,
-        device="cpu",
-        verbose=0,
-    )
-
-
-show_summary({**BASE, **dict(GRID)["res_2222"]})
+torchinfo.summary(
+    AircraftNet({**BASE, **dict(GRID)["res_2222"]}, N_CLASSES),
+    input_size=(1, 3, BASE["img_size"], BASE["img_size"]),
+    col_names=("output_size", "num_params"),
+    row_settings=("var_names",),
+    depth=4,
+    device="cpu",
+    verbose=0,
+)
 
 # %% [markdown]
-# Size and cost of every configuration. `head_share` is the fraction of the parameters in the classifier: with the
-# flatten head (s0, s1) it holds 81% of the network.
+# Size and cost of every network of the study. With the flatten classifier (the plain VGG and the network with
+# BatchNorm), the classifier alone holds 81% of the parameters.
 
 # %%
 rows = []
@@ -783,17 +689,16 @@ pd.DataFrame(rows).set_index("run").style.format(
     {"params_M": "{:.2f}", "head_share": "{:.0%}", "GFLOPs": "{:.2f}"}
 )
 
+
 # %% [markdown]
 # ## Training
 #
-# - **Optimizer**: SGD with momentum 0.9; when enabled, weight decay applies to convolution and linear weights only, not
-#   to BN parameters and biases.
-# - **Schedule**: linear warmup for 3 epochs, then cosine decay to zero (or one-cycle, where selected by the tuning).
-# - **Loss**: cross-entropy (with label smoothing where enabled). The validation loss is always plain cross-entropy, so
-#   that runs with and without smoothing are on the same scale.
-# - **Model selection**: we keep the epoch with the highest validation accuracy and evaluate the test split once, on
-#   that checkpoint.
-
+# - **Loss:** cross-entropy (lecture 3, *Softmax function*, *Cross-entropy loss*), with label smoothing where the recipe enables
+#   it. The validation loss is always the plain cross-entropy, so that all curves share the same scale.
+# - **Weight decay**, when enabled, applies to convolution and linear weights only, not to BatchNorm parameters and
+#   biases.
+# - **Model selection** (lecture 6, *Early stopping*): every run keeps the epoch with the highest validation accuracy, and the
+#   test split is evaluated once, on that checkpoint.
 
 # %%
 def make_optimizer(model, cfg):
@@ -900,9 +805,10 @@ def fit(cfg, data, verbose=True):
 # %% [markdown]
 # ### Sanity checks
 #
-# At initialization the loss must be close to ln(100) ≈ 4.61 (a uniform guess over 100 classes), and the network must be
-# able to memorize 100 training images; otherwise the data, the labels or the training step are wrong.
-# These are the first checks of Karpathy's *A Recipe for Training Neural Networks* (2019), cited in lecture 6.
+# Before trusting any experiment we verify the training pipeline (lecture 6, *A "recipe" for training NNs*, step 2: "check
+# init loss, overfit a small dataset"). At initialization the loss must be close to ln(100) ≈ 4.61, the loss of a
+# uniform guess over 100 classes; and the network must be able to memorize 100 training images. A failure would point
+# to a bug in the data, the labels or the training step.
 
 # %%
 if data is None:
@@ -933,107 +839,72 @@ else:
             f"tiny subset: train acc {(model(x).argmax(1) == y).float().mean().item():.2f}  (expected ~1.00)"
         )
 
+
 # %% [markdown]
 # ## Experiment runner
 #
-# `run_experiment` trains one configuration (in `results/part1`, or in the directory given by `results_dir`), evaluates its best checkpoint on the test split and stores the
-# configuration, the per-epoch curves and the test predictions. `run_sweep` trains a configuration at every learning
-# rate of the sweep (seed 42); `run_seeds` trains it with two more seeds at its best learning rate. Note that the seed-42
-# run of a configuration is the best of three learning rates, hence slightly optimistic; the two additional seeds are
-# not.
-
+# The runner trains one configuration (in `results/part1`, or in the directory given by `results_dir` for Part 2), evaluates its best checkpoint on the test split and stores the configuration,
+# the per-epoch curves and the test predictions; a run whose result already exists with the same configuration is
+# loaded instead of trained. Every configuration is first trained at the three learning rates (seed 42), then with two
+# more seeds at its best learning rate when the experiment requires it. The seed-42 result is the best of three learning
+# rates, hence slightly optimistic; the two other seeds are not. The plotting helpers used in the rest of the notebook
+# follow.
 
 # %%
 def result_path(name, group, seed, results_dir=None):
     return (results_dir or RESULTS_DIR) / group / f"{name}_seed{seed}.json"
 
 
-_last_arch = None
+_LOADED = 0  # stored runs loaded since the last report_runs()
+
+
+def report_runs():
+    # One line instead of one per stored run: how many runs the previous cell loaded instead of training.
+    global _LOADED
+    if _LOADED:
+        print(f"{_LOADED} stored runs loaded (same configuration, not retrained)")
+    _LOADED = 0
 
 
 def run_experiment(name, group, note="", results_dir=None, **overrides):
-    global _last_arch
+    global _LOADED
     cfg = {**BASE, **overrides, "name": name, "group": group}
-    if cfg.get(
-        "pretrained", False
-    ):  # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
+    if cfg.get("pretrained", False):  # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
         cfg = {k: v for k, v in cfg.items() if k not in SCRATCH_ONLY_KEYS}
     out = result_path(name, group, cfg["seed"], results_dir)
     if out.exists() and not RETRAIN:
         run = json.loads(out.read_text())
-        if run["config"] == json.loads(
-            json.dumps(cfg)
-        ):  # same configuration (tuples stored as lists)
-            print(
-                f"skip {group}/{name}: best val {run['best_val_acc']:.3f} (already trained)"
-            )
+        if run["config"] == json.loads(json.dumps(cfg)):  # same configuration (tuples stored as lists)
+            _LOADED += 1
             return run
-        print(
-            f"{group}/{name}: configuration changed since the stored run, training again"
-        )
+        print(f"{group}/{name}: configuration changed since the stored run, training again")
 
-    print(f"### {group}/{name}")
-    print(
-        "    "
-        + " | ".join(
-            f"{k} {cfg[k]}"
-            for k in (
-                "lr",
-                "weight_decay",
-                "label_smoothing",
-                "dropout",
-                "random_erasing",
-                "augment",
-                "crop_scale",
-                "seed",
-                "epochs",
-            )
-        )
-        + f" | schedule {cfg.get('schedule', 'cosine')}"
-    )
-    arch = {k: cfg.get(k) for k in ARCH_KEYS}
-    if SHOW_SUMMARY and arch != _last_arch:
-        print(show_summary(cfg))
-        _last_arch = arch
+    shown = ("lr", "weight_decay", "label_smoothing", "dropout", "random_erasing", "augment", "crop_scale", "seed", "epochs")
+    print(f"### {group}/{name}\n    " + " | ".join(f"{k} {cfg[k]}" for k in shown)
+          + f" | schedule {cfg.get('schedule', 'cosine')}")
     fix_random(cfg["seed"])
     data = get_data(cfg["img_size"], cfg.get("pretrained", False))
     t0 = time.time()
     model, hist, best_epoch, diverged = fit(cfg, data)
     minutes = (time.time() - t0) / 60
     if best_epoch:
-        test_loss, test_acc, test_pred = evaluate(
-            model, data["test"], data, cfg, return_preds=True
-        )
+        test_loss, test_acc, test_pred = evaluate(model, data["test"], data, cfg, return_preds=True)
     else:  # diverged before the first validation: there is no checkpoint to test
         test_loss, test_acc, test_pred = float("nan"), float("nan"), []
 
     cpu_model = build_model(cfg, N_CLASSES)
     run = dict(
-        name=name,
-        group=group,
-        seed=cfg["seed"],
-        note=note,
-        config=cfg,
-        history=hist,
-        best_val_acc=max(hist["val_acc"], default=0.0),
-        best_epoch=best_epoch,
+        name=name, group=group, seed=cfg["seed"], note=note, config=cfg, history=hist,
+        best_val_acc=max(hist["val_acc"], default=0.0), best_epoch=best_epoch,
         final_val_acc=hist["val_acc"][-1] if hist["val_acc"] else 0.0,
         final_train_acc=hist["train_acc"][-1] if hist["train_acc"] else 0.0,
-        test_acc=test_acc,
-        test_loss=test_loss,
-        test_pred=test_pred,
-        test_true=data["test"].y.cpu().tolist(),
-        params=count_params(cpu_model),
-        gflops=count_gflops(cpu_model, cfg["img_size"]),
-        minutes=minutes,
-        device=torch.cuda.get_device_name() if DEVICE.type == "cuda" else str(DEVICE),
-        diverged=diverged,
+        test_acc=test_acc, test_loss=test_loss, test_pred=test_pred, test_true=data["test"].y.cpu().tolist(),
+        params=count_params(cpu_model), gflops=count_gflops(cpu_model, cfg["img_size"]), minutes=minutes,
+        device=torch.cuda.get_device_name() if DEVICE.type == "cuda" else str(DEVICE), diverged=diverged,
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(run))
-    print(
-        f"{name}: best val {run['best_val_acc']:.3f} (epoch {best_epoch}) | test {test_acc:.3f} | {minutes:.1f} min"
-    )
+    print(f"{name}: best val {run['best_val_acc']:.3f} (epoch {best_epoch}) | test {test_acc:.3f} | {minutes:.1f} min")
     return run
 
 
@@ -1068,9 +939,8 @@ def run_sweep(name, group, note="", **overrides):
     for lr in LR_SWEEP:
         run_experiment(f"{name}_lr{lr:g}", group, note=note, **{**overrides, "lr": lr})
     best = best_of(load_group(group), name)
-    print(
-        f"==> {name}: best lr {best['config']['lr']:g} | val {best['best_val_acc']:.3f} | test {best['test_acc']:.3f}\n"
-    )
+    print(f"==> {label(name)}: best learning rate {best['config']['lr']:g} | validation {best['best_val_acc']:.3f} | "
+          f"test {best['test_acc']:.3f}")
     return best
 
 
@@ -1148,16 +1018,18 @@ def run_overrides(run):
     }
 
 
+def runs_of(group, name):
+    # The runs of one network in a group, keyed by run name.
+    return {n: r for n, r in load_group(group).items() if n.startswith(name + "_")}
+
+
 def tuning_runs(name):
     # Every seed-42 run of the recipe search (grid + random) of one network, keyed by run name.
-    runs = {**load_group("tune_grid"), **load_group("tune_random")}
-    return {n: r for n, r in runs.items() if n.startswith(name + "_")}
+    return {**runs_of("tune_grid", name), **runs_of("tune_random", name)}
 
 
 def best_grid_point(name):
-    grid = {
-        n: r for n, r in load_group("tune_grid").items() if n.startswith(name + "_")
-    }
+    grid = runs_of("tune_grid", name)
     if len(grid) < len(TUNE_LRS) * len(TUNE_WDS):
         return None
     best = max(grid.values(), key=lambda r: r["best_val_acc"])
@@ -1203,295 +1075,94 @@ def long_runs(name):
     ]
 
 
-# %% [markdown]
-# ## The ladder: s0 -> s4
-#
-# What each step is expected to show:
-#
-# - **s0 (plain VGG) memorizes.** It has 6.2M parameters for 3,334 training images, 5M of them in the flatten head: the
-#   last feature map is flattened into 50,176 features, more than the number of training images, so a linear classifier
-#   on top can separate any labelling of them. With no augmentation and no regularization, training accuracy reaches
-#   100% while validation accuracy stalls and validation loss rises. Standard CNNs can even fit randomly shuffled labels
-#   (Zhang et al., ICLR 2017).
-# - **s1, BatchNorm** (Ioffe & Szegedy, ICML 2015) normalizes the activations of every layer, which makes optimization
-#   better behaved and more tolerant to the learning rate.
-# - **s2, global average pooling** (Lin et al., *Network in Network*, ICLR 2014) reduces each channel of the last
-#   feature map to one number: the 5M-weight head becomes a 26k-weight one.
-# - **s3, crop and flip** show a different version of every image at every epoch, so the training set can no longer be
-#   memorized exactly.
-# - **s4, a 4th stage** adds capacity and receptive field once the network is regularized.
+def select(runs_by_net, prefix="", verbose=True):
+    # The selection rule: highest mean validation accuracy over the seeds; if the best two are within one standard
+    # deviation of each other, the simpler network. Returns (ranked names, selected name).
+    ranked = sorted(runs_by_net, key=lambda n: -seed_mean(runs_by_net[n]))
+    first, second = ranked[0], ranked[1]
+    diff = seed_mean(runs_by_net[first]) - seed_mean(runs_by_net[second])
+    noise = max(seed_std(runs_by_net[first]), seed_std(runs_by_net[second]))
+    selected = first if diff > noise else min((first, second), key=simplicity)
+    if verbose:
+        for n in ranked:
+            runs = runs_by_net[n]
+            print(f"{label(n):20s} {prefix}validation {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
+                  f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
+                  f"train {seed_mean(runs, 'final_train_acc'):.3f}")
+        print(f"-> {label(first)}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})" if diff > noise
+              else f"-> a tie ({diff:.3f} <= {noise:.3f}): the simpler network, {label(selected)}")
+    return ranked, selected
 
-# %%
-# [run]
-for name, over in LADDER:
-    run_sweep(name, "ladder", **over)
 
-# %% [markdown]
-# ## Depth x residual
-#
-# We replicate at small scale the central experiment of He et al. (CVPR 2016): **identical plain and residual networks
-# at increasing depth**. All six networks are s4 (BatchNorm, GAP, crop and flip, four stages of 64 to 512 channels) with
-# a different number of blocks per stage, with and without skip connections:
-#
-# | blocks per stage | convolutional layers | parameters | motivation |
-# |---|---|---|---|
-# | `[1,1,1,1]` | 11 | 4.8M | s4 itself, the shallow reference |
-# | `[2,2,2,2]` | 19 | 11.1M | the stage layout of ResNet-18; at this depth He et al. find plain and residual networks on par |
-# | `[3,4,6,1]` | 31 | 11.8M | the layout of ResNet-34 with a single block in the last stage; at 34 layers He et al. find the plain network *worse* than its shallower version and the residual one better |
-#
-# We use `[3,4,6,1]` rather than the full `[3,4,6,3]` (21.4M parameters) because a 512-channel block alone costs 4.7M
-# parameters: the additional depth goes into the first three stages, where it is cheap.
-#
-# **Reading the results.** Within a depth, plain and residual networks differ only by the skip connections. Across
-# depths more changes than depth (`[3,4,6,1]` also redistributes capacity and doubles the compute), so a drop of the
-# plain network with depth is meaningful only if the residual network with the same layout does not drop. The
-# signature of degradation is in the *training* accuracy: a network that is harder to optimize fits its training set
-# worse, whereas an overfitting one fits it better.
+def long_final():
+    # {network: [runs over the seeds]} at LONG_EPOCHS, for the tuned networks; None until all are trained.
+    names = finalists(TUNE_N) or []
+    runs = {n: long_runs(n) for n in names}
+    return runs if names and all(len(r) == len(SEEDS) for r in runs.values()) else None
 
-# %%
-# [run]
-for name, over in GRID:
-    run_sweep(name, "depth_residual", **over)
 
-# %% [markdown]
-# ### Seeds
-#
-# Run-to-run variation (initialization, data order, augmentation) is easily 1–2 points on 3,333 validation images,
-# comparable to the differences between several networks. We train every network with two more seeds at its best
-# learning rate and compare means.
+def final_network():
+    # The final model: the selection rule applied after the longer training (None until it is trained).
+    runs = long_final()
+    return select(runs, verbose=False)[1] if runs else None
 
-# %%
-# [run]
-for name, over in GRID:
-    run_seeds(name, "depth_residual", note="seeds", **over)
 
-# %% [markdown]
-# ## The training recipe
-#
-# We now regularize the three best networks of the depth x residual experiment and tune their training recipe. The
-# recipe combines standard techniques from lecture 6:
-#
-# | component | effect | reference |
-# |---|---|---|
-# | weight decay (not on BN/bias) | penalizes large weights | l2 regularization, lecture 6 |
-# | label smoothing | target of 1−ε on the true class, ε spread over the others: the network is not pushed towards infinite confidence | Szegedy et al., CVPR 2016 |
-# | dropout before the classifier | randomly drops features during training; placed between global pooling and the last linear layer | Srivastava et al., JMLR 2014 |
-# | random erasing | hides a random rectangle of the image | Zhong et al., AAAI 2020 |
-# | minimum crop area | smaller crops show parts of the aircraft at a larger scale (multi-scale training) | lecture 6 |
-# | one-cycle schedule | the learning rate rises over the first 30% of training, then decays | Smith & Topin, 2019 |
-#
-# We tune it in three steps, following the hyperparameter search of lecture 6:
-#
-# 1. **Grid search on learning rate x weight decay** (log-spaced), the two most influential parameters: learning rate
-#    0.1 and 0.05, weight decay from 1e-4 to 1e-2. During this step the other parameters are fixed (label smoothing
-#    0.1, dropout 0.2, random erasing 0.25, minimum crop 50%, cosine schedule). The grid initially stopped at 2e-3,
-#    which turned out to be the best value for two networks; since an optimum at the edge of a grid may lie beyond it,
-#    we extended the grid until accuracy decreased.
-# 2. **Random search on the other parameters** (Bergstra & Bengio, JMLR 2012), at the best learning rate and weight
-#    decay of each network. A full grid on these five parameters would require 216 runs per network; we draw 12
-#    configurations once and train the same 12 on every network.
-# 3. **Confirmation with seeds.** The best of many single runs is partly the luckiest one, so we retrain the two best
-#    configurations of each network with two more seeds and compare means.
-#
-# | parameter | values | note |
-# |---|---|---|
-# | label smoothing | 0, 0.05, 0.1, 0.2 | |
-# | dropout | 0, 0.2, 0.5 | dropout is not used in ResNets, for its unclear interaction with BatchNorm (lecture 6), so 0 is a real candidate |
-# | random erasing | p = 0, 0.25, 0.5 | the original papers use 0.5 |
-# | minimum crop area | 25%, 35%, 50% | |
-# | schedule | cosine with warmup, one-cycle | |
-#
-# We leave out Mixup, CutMix, TrivialAugment and stochastic depth, which make the training task much harder and pay off
-# only with schedules much longer than 70 epochs, and the exponential moving average of the weights, which mainly helps
-# at the end of long trainings: they are candidates for a final, longer training.
-#
-# **Networks.** We tune `plain_2222` and `res_3461`, the two best networks, and `res_2222`, the third: it has the
-# highest training accuracy of the experiment, i.e. it overfits the most, so it is the network a stronger regularization
-# can help most. We exclude `plain_3461`, which does not fit its training set (an optimization problem that
-# regularization cannot fix), and the two 11-layer networks, which trail the best ones by 5–9 points. All three networks
-# receive the same tuning budget, so that the final comparison is fair.
-#
-# **Selection rule.** For each network we take its best configuration by mean validation accuracy over the seeds; the
-# final network is the one with the highest mean, and if the two best are within one standard deviation of each other,
-# the simpler one.
-#
-# **Limitation.** The search proceeds in two stages: the learning rate and weight decay are chosen with fixed values of
-# the other parameters, so they are not guaranteed to be jointly optimal with the configuration found by the random
-# search.
+# %% id="7KjzoXrcQLJa"
+import re
 
-# %%
-# [run]
-names = finalists(TUNE_N)
-if names is None:
-    print("train the whole grid with all its seeds first")
-else:
-    print("networks:", names)
-    # 1. grid search: learning rate x weight decay, the other parameters as in RECIPE
-    for name in names:
-        for lr in TUNE_LRS:
-            for wd in TUNE_WDS:
-                run_experiment(
-                    f"{name}_lr{lr:g}_wd{wd:g}",
-                    "tune_grid",
-                    note="tuning: lr x wd",
-                    **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd},
-                )
-        lr, wd = best_grid_point(name)
-        print(f"==> {name}: best lr {lr:g}, weight decay {wd:g}\n")
+# Readable names for tables and plots; the stored run names are unchanged
+DISPLAY = {
+    "s0_vgg": "plain VGG", "s1_bn": "+ BatchNorm", "s2_gap": "+ global average pooling",
+    "s3_aug": "+ crop and flip", "s4_stage4": "+ fourth stage",
+    "plain_1111": "plain, 11 layers", "res_1111": "residual, 11 layers",
+    "plain_2222": "plain, 19 layers", "res_2222": "residual, 19 layers",
+    "plain_3461": "plain, 31 layers", "res_3461": "residual, 31 layers",
+}
 
-# %%
-# [run]
-# 2. random search on the other parameters, at the best lr and weight decay of each network
-configs = random_configs()
-for i, c in enumerate(configs):
-    print(f"cfg{i:02d}  {c}")
-for name in finalists(TUNE_N):
-    lr, wd = best_grid_point(name)
-    for i, c in enumerate(configs):
-        run_experiment(
-            f"{name}_cfg{i:02d}",
-            "tune_random",
-            note="tuning: random search",
-            **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd, **c},
-        )
 
-# %%
-# [run]
-# 3. confirmation: the TOP_K best configurations of each network, with the other seeds
-for name in finalists(TUNE_N):
-    for run in top_configs(name):
-        for seed in SEEDS[1:]:
-            run_experiment(
-                f"{run['name']}_s{seed}",
-                "tune_seeds",
-                note="tuning: seeds",
-                **{**run_overrides(run), "seed": seed},
-            )
+def label(name):
+    # Readable name of a network, a roadmap step or a recipe configuration.
+    if name in DISPLAY:
+        return DISPLAY[name]
+    m = re.fullmatch(r"cfg(\d+)", name)
+    if m:
+        return f"configuration {int(m.group(1))}"
+    m = re.fullmatch(r"lr([\d.e-]+)_wd([\d.e-]+)", name)
+    if m:
+        return f"learning rate {m.group(1)}, weight decay {m.group(2)}"
+    return name
 
-# %% [markdown]
-# ## Longer training
-#
-# The training recipe was tuned with a budget of 70 epochs, and the best runs of the three tuned networks reach their
-# best validation accuracy in the last epochs, with a training accuracy still around 90%: they are still improving
-# when training stops. We therefore train the three networks again for **150 epochs**, each with its own best
-# configuration and **no other change** — no additional regularization or augmentation — with three seeds each. The
-# one-cycle schedule is defined in fractions of the training, so it stretches with the number of epochs.
-#
-# Since the recipe was tuned for 70 epochs, a longer training gives the networks more time to overfit: we check that
-# the gap between training and validation accuracy does not grow. The final model is selected with the same rule as
-# before, now at 150 epochs.
 
-# %%
-# [run]
-for name in finalists(TUNE_N):
-    best = best_tuned(name)
-    if best is None:
-        print(f"{name}: train the recipe search with all its seeds first")
-        continue
-    cfg_name, runs = best
-    print(f"{name}: {cfg_name}, {LONG_EPOCHS} epochs")
-    for seed in SEEDS:
-        run_experiment(
-            f"{name}_ep{LONG_EPOCHS}_s{seed}",
-            "long",
-            note=f"{cfg_name}, {LONG_EPOCHS} epochs",
-            **{**run_overrides(runs[0]), "epochs": LONG_EPOCHS, "seed": seed},
-        )
-
-# %% [markdown]
-# ## Results
-#
-# All tables and plots below are computed from the stored runs.
-
-# %%
 # Categorical colours in a fixed order (one per run inside a plot)
-COLORS = [
-    "#2a78d6",
-    "#eb6834",
-    "#1baf7a",
-    "#eda100",
-    "#e87ba4",
-    "#008300",
-    "#6250d6",
-    "#e34948",
-]
-plt.rcParams.update(
-    {
-        "axes.prop_cycle": plt.cycler(color=COLORS),
-        "lines.linewidth": 2,
-        "axes.grid": True,
-        "grid.alpha": 0.3,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-    }
-)
+COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
+plt.rcParams.update({"axes.prop_cycle": plt.cycler(color=COLORS), "lines.linewidth": 2,
+                     "axes.grid": True, "grid.alpha": 0.3, "axes.spines.top": False, "axes.spines.right": False})
 
 
 def summary(runs):
     # One row per run (single seed).
-    rows = [
-        dict(
-            run=n,
-            lr=r["config"]["lr"],
-            params_M=r["params"] / 1e6,
-            best_val=r["best_val_acc"],
-            best_epoch=r["best_epoch"],
-            final_train=r["final_train_acc"],
-            gap=r["final_train_acc"] - r["final_val_acc"],
-            test=r["test_acc"],
-            minutes=r["minutes"],
-        )
-        for n, r in runs.items()
-    ]
-    return (
-        pd.DataFrame(rows)
-        .set_index("run")
-        .style.format(
-            {
-                "lr": "{:g}",
-                "params_M": "{:.2f}",
-                "best_val": "{:.3f}",
-                "final_train": "{:.3f}",
-                "gap": "{:+.3f}",
-                "test": "{:.3f}",
-                "minutes": "{:.1f}",
-            }
-        )
-    )
+    rows = [{"network": label(n), "learning rate": r["config"]["lr"], "parameters (M)": r["params"] / 1e6,
+             "best validation": r["best_val_acc"], "best epoch": r["best_epoch"],
+             "final training": r["final_train_acc"], "train − validation gap": r["final_train_acc"] - r["final_val_acc"],
+             "test": r["test_acc"], "minutes": r["minutes"]}
+            for n, r in runs.items()]
+    return pd.DataFrame(rows).set_index("network").style.format(
+        {"learning rate": "{:g}", "parameters (M)": "{:.2f}", "best validation": "{:.3f}", "final training": "{:.3f}",
+         "train − validation gap": "{:+.3f}", "test": "{:.3f}", "minutes": "{:.1f}"})
 
 
 def seed_summary(groups):
     # One row per configuration, mean ± std over the seeds. groups: {label: [runs]}
-    rows = [
-        dict(
-            run=label,
-            lr=runs[0]["config"]["lr"],
-            seeds=len(runs),
-            params_M=runs[0]["params"] / 1e6,
-            val_mean=seed_mean(runs),
-            val_std=seed_std(runs),
-            test_mean=seed_mean(runs, "test_acc"),
-            test_std=seed_std(runs, "test_acc"),
-            train_mean=seed_mean(runs, "final_train_acc"),
-        )
-        for label, runs in groups.items()
-        if runs
-    ]
-    return (
-        pd.DataFrame(rows)
-        .set_index("run")
-        .style.format(
-            {
-                "lr": "{:g}",
-                "params_M": "{:.2f}",
-                "val_mean": "{:.3f}",
-                "val_std": "{:.3f}",
-                "test_mean": "{:.3f}",
-                "test_std": "{:.3f}",
-                "train_mean": "{:.3f}",
-            }
-        )
-    )
+    rows = [{"network": label(name), "learning rate": runs[0]["config"]["lr"], "seeds": len(runs),
+             "parameters (M)": runs[0]["params"] / 1e6,
+             "validation (mean)": seed_mean(runs), "validation (std)": seed_std(runs),
+             "test (mean)": seed_mean(runs, "test_acc"), "test (std)": seed_std(runs, "test_acc"),
+             "final training (mean)": seed_mean(runs, "final_train_acc")}
+            for name, runs in groups.items() if runs]
+    return pd.DataFrame(rows).set_index("network").style.format(
+        {"learning rate": "{:g}", "parameters (M)": "{:.2f}", "validation (mean)": "{:.3f}",
+         "validation (std)": "{:.3f}", "test (mean)": "{:.3f}", "test (std)": "{:.3f}",
+         "final training (mean)": "{:.3f}"})
 
 
 def plot_curves(runs, title=""):
@@ -1501,38 +1172,46 @@ def plot_curves(runs, title=""):
         h = r["history"]
         ep = range(1, len(h["val_acc"]) + 1)
         c = COLORS[i % len(COLORS)]
-        axes[0].plot(ep, h["val_acc"], color=c, label=name)
+        axes[0].plot(ep, h["val_acc"], color=c, label=label(name))
         if r["best_epoch"]:
             axes[0].plot(r["best_epoch"], r["best_val_acc"], "o", color=c, markersize=7)
-        axes[1].plot(ep, h["val_loss"], color=c, label=name)
-        axes[2].plot(ep, h["train_acc"], color=c, label=name)
-    for ax, t in zip(
-        axes,
-        (
-            "validation accuracy (dot = best epoch)",
-            "validation loss (plain CE)",
-            "training accuracy",
-        ),
-    ):
-        ax.set_title(t)
-        ax.set_xlabel("epoch")
+        axes[1].plot(ep, h["val_loss"], color=c, label=label(name))
+        axes[2].plot(ep, h["train_acc"], color=c, label=label(name))
+    for ax, t in zip(axes, ("validation accuracy (dot = best epoch)", "validation loss (cross-entropy)",
+                            "training accuracy")):
+        ax.set_title(t); ax.set_xlabel("epoch")
     axes[0].legend(fontsize=8)
-    fig.suptitle(title)
-    plt.tight_layout()
-    plt.show()
+    fig.suptitle(title); plt.tight_layout(); plt.show()
 
 
 # %% [markdown]
-# ### The ladder
+# ## 1. From a plain VGG to a residual network: a roadmap
 #
-# Each step at its best learning rate (one seed).
+# Each step adds one change to the previous one and is trained at three learning rates (one seed). What we expect:
 #
-# Every step improves validation accuracy, from **18.5%** (s0) to **52.6%** (s4): BatchNorm adds 11.7 points, global
-# average pooling 13.3, crop and flip 4.2, the fourth stage 4.9. The curves show the mechanism: s0–s2 reach 100%
-# training accuracy, i.e. they memorize the training set, and the validation loss of s0 rises while its training loss
-# goes to zero. From s3 on, augmentation keeps the training accuracy below 100% and the train–validation gap shrinks.
+# - **A plain VGG** with three stages and a flatten classifier has 6.2M parameters for 3,334 training images — 5M of
+#   them in the classifier, which receives 50,176 features per image, more than the number of training images. Without
+#   augmentation or regularization it should **memorize** the training set: training accuracy close to 100%, validation
+#   accuracy far below. Standard convolutional networks can even fit randomly shuffled labels (Zhang et al., ICLR 2017).
+# - **+ BatchNorm** should make optimization better behaved and more tolerant to the learning rate.
+# - **+ global average pooling** removes the 5M-weight classifier, where memorization concentrates.
+# - **+ crop and flip** show a different version of every image at every epoch, so the training set can no longer be
+#   memorized exactly.
+# - **+ a fourth stage** adds capacity and receptive field once the network is regularized.
 
-# %%
+# %% colab={"base_uri": "https://localhost:8080/"} id="nzWzW-VHQLJY" outputId="f0273c3c-3215-4c10-a775-9fae97790954"
+# [run]
+for name, over in LADDER:
+    run_sweep(name, "ladder", **over)
+report_runs()
+
+# %% [markdown]
+# ### Results
+#
+# Each step at its best learning rate; the curves show validation accuracy (dot = best epoch), validation loss and
+# training accuracy.
+
+# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="Wtr32tImQLJa" outputId="300d5da5-ff4b-4a91-905f-077b83240ec6"
 ladder = load_group("ladder")
 steps = {n: best_of(ladder, n) for n, _ in LADDER}
 steps = {n: r for n, r in steps.items() if r}
@@ -1542,84 +1221,174 @@ if steps:
     names = list(steps)
     xs = np.arange(len(names))
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.bar(
-        xs - 0.2,
-        [steps[n]["best_val_acc"] for n in names],
-        0.38,
-        label="val (best epoch)",
-        color=COLORS[0],
-    )
-    ax.bar(
-        xs + 0.2,
-        [steps[n]["test_acc"] for n in names],
-        0.38,
-        label="test",
-        color=COLORS[1],
-    )
+    ax.bar(xs - 0.2, [steps[n]["best_val_acc"] for n in names], 0.38, label="validation (best epoch)", color=COLORS[0])
+    ax.bar(xs + 0.2, [steps[n]["test_acc"] for n in names], 0.38, label="test", color=COLORS[1])
     for x_, n in zip(xs, names):
-        ax.text(
-            x_ - 0.2,
-            steps[n]["best_val_acc"] + 0.01,
-            f"{steps[n]['best_val_acc']:.2f}",
-            ha="center",
-            fontsize=8,
-        )
-    ax.set_xticks(xs, names)
-    ax.set_ylabel("accuracy")
-    ax.axhline(0.5, ls="--", c="gray", lw=1)
-    ax.legend()
-    ax.set_title("the ladder: each step adds one change, at its best learning rate")
-    plt.tight_layout()
-    plt.show()
+        ax.text(x_ - 0.2, steps[n]["best_val_acc"] + 0.01, f"{steps[n]['best_val_acc']:.2f}", ha="center", fontsize=8)
+    ax.set_xticks(xs, [label(n) for n in names], rotation=15, ha="right"); ax.set_ylabel("accuracy"); ax.axhline(0.5, ls="--", c="gray", lw=1)
+    ax.legend(); ax.set_title("the roadmap: each step adds one change, at its best learning rate")
+    plt.tight_layout(); plt.show()
 
-    plot_curves(steps, "the ladder")
+    plot_curves(steps, "the roadmap")
+
+# %% [markdown]
+# **Every step improves the network**, from **18.5%** (plain VGG) to **52.6%** (fourth stage) validation accuracy: BatchNorm adds 11.7
+# points, global average pooling 13.3, crop and flip 4.2 and the fourth stage 4.9.
+#
+# The curves show the mechanism. The first three networks reach **100% training accuracy**: they memorize the training
+# set. The plain VGG does it within about 15 epochs, after which its validation loss *rises* while its training loss goes to zero —
+# the network becomes confidently wrong on unseen images. BatchNorm and global average pooling make the memorizing
+# network generalize better, but do not stop memorization. Augmentation does: once crop and flip are added, the training accuracy stays
+# below 100% and the gap between training and validation accuracy shrinks.
 
 # %% [markdown]
 # ### Sensitivity to the learning rate
 #
-# Without BatchNorm (s0) the network diverges at lr 0.1 and reaches only 4% at 0.05; with BatchNorm (s1) it trains at
-# every learning rate and is 11.7 points better at its best one (0.01). After global average pooling the best learning
-# rate moves to 0.05–0.1 and 0.01 becomes clearly worse: a single learning rate for every step would have penalized
-# some steps.
+# Best validation accuracy of every step at each learning rate.
 
-# %%
+# %% colab={"base_uri": "https://localhost:8080/", "height": 457} id="EREoptOEQLJa" outputId="b1f921c9-419f-4102-b418-108146e1c403"
 if ladder:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for i, (name, _) in enumerate(LADDER):
         swept = sweep_runs(ladder, name)
         if swept:
             lrs = sorted(swept)
-            ax.plot(
-                lrs,
-                [swept[lr]["best_val_acc"] for lr in lrs],
-                "o-",
-                color=COLORS[i],
-                label=name,
-                markersize=8,
-            )
-    ax.set_xscale("log")
-    ax.set_xlabel("learning rate")
-    ax.set_ylabel("best validation accuracy")
-    ax.set_title("every step of the ladder across learning rates")
-    ax.legend(fontsize=8)
-    plt.tight_layout()
-    plt.show()
+            ax.plot(lrs, [swept[lr]["best_val_acc"] for lr in lrs], "o-", color=COLORS[i], label=label(name), markersize=8)
+    ax.set_xscale("log"); ax.set_xlabel("learning rate"); ax.set_ylabel("best validation accuracy")
+    ax.set_title("every step of the roadmap across learning rates"); ax.legend(fontsize=8)
+    plt.tight_layout(); plt.show()
 
 # %% [markdown]
-# ### Depth x residual
+# The plain VGG, without BatchNorm, diverges at learning rate 0.1 and reaches only 4% at 0.05; with BatchNorm every
+# learning rate trains, and the best one gives 11.7 more points — the tolerance to the learning rate promised by lecture 4
+# (*Batch norm: pros and cons*). After global average pooling the best learning rate moves from 0.01 to 0.05–0.1, and
+# 0.01 becomes clearly worse. A single learning rate for every step would have penalized some of them: this is why
+# every configuration is compared at its own best.
 #
-# Mean ± standard deviation over three seeds, each network at its best learning rate; the curves are the seed-42 runs.
+# With augmentation and a fourth stage the network is regularized and still improving: the next question is whether it
+# benefits from more depth.
+
+# %% [markdown]
+# ## 2. Depth and residual connections
 #
-# - **Degradation.** Going from 19 to 31 layers, the plain network loses 8.3 points (55.9% -> 47.6%) and its *training*
-#   accuracy drops too (97.5% -> 91.9%): the deeper plain network is harder to optimize, the degradation problem of He et
-#   al. The residual network improves with depth at every step (46.9% -> 52.2% -> 54.6%) and keeps fitting its training
-#   set.
-# - **Shallow networks.** At 11 and 19 layers the residual networks are about 4 points *worse* than the plain ones,
-#   well beyond the seed noise. They also reach a higher training accuracy (99% vs 97–98%): without regularization, the
-#   ease of fitting that skip connections provide turns into more overfitting on 33 images per class. The training
-#   recipe below tests this hypothesis.
+# We replicate at small scale the central experiment of the ResNet paper (lecture 5, *Residual Networks*; He et al., 2016):
+# **identical plain and residual networks at increasing depth**. All six networks are the last network of the roadmap
+# with a different number of blocks per stage, with and without skip connections:
+#
+# ![depth grid](attachment:depth_grid.png)
+#
+#
+# - **one block per stage**: 11 convolutional layers, 4.8M parameters — the last network of the roadmap itself;
+# - **two blocks per stage**: 19 layers, 11.1M — the stage layout of ResNet-18 (lecture 5, *Common variants on ImageNet*),
+#   where He et al. find plain and residual networks on par;
+# - **3, 4, 6 and 1 blocks**: 31 layers, 11.8M — the layout of ResNet-34 with one block in the last stage, where He et
+#   al. find the plain network *worse* than its shallower version. A 512-channel block alone costs 4.7M parameters, so
+#   the extra depth goes into the first three stages.
+#
+# Within a depth, the two networks differ only by the skip connections. lecture 5 notes that deeper plain networks show
+# **higher training error**, so the problem is optimization, not overfitting: this is the signature to look for in the
+# training accuracy. Each network is trained at three learning rates, then with two more seeds at its best one, since
+# run-to-run variation (1–2 points) is comparable to the differences between networks.
+
+# %% colab={"base_uri": "https://localhost:8080/"} id="eKrS-l2IQLJY" outputId="e36a9123-872c-4aaa-9d15-5833f87ec4cc"
+# [run]
+for name, over in GRID:
+    run_sweep(name, "depth_residual", **over)
+report_runs()
+
+# %% [markdown]
+# Two more seeds for every network, at its best learning rate.
+
+# %% colab={"base_uri": "https://localhost:8080/"} id="QvW1iyfAQLJY" outputId="8145b6e1-9703-4e0e-8192-054a83c68482"
+# [run]
+for name, over in GRID:
+    run_seeds(name, "depth_residual", note="seeds", **over)
+report_runs()
+
+# %% [markdown]
+# ### Results
+#
+# The six networks with their validation accuracy (mean ± standard deviation over three seeds) and training accuracy;
+# then the same numbers against depth — left validation, right training accuracy — and the training curves of the
+# seed-42 runs.
 
 # %%
+from matplotlib.patches import Arc, FancyArrowPatch, FancyBboxPatch, Patch, Rectangle
+
+STAGE_COLORS = ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab"]       # stages 1-4: 64, 128, 256, 512 channels
+SKIP_COLOR = COLORS[1]
+DEPTH_COLUMNS = [("1111", "11 layers", "1, 1, 1, 1 blocks", ""),
+                 ("2222", "19 layers", "2, 2, 2, 2 blocks", "ResNet-18 layout"),
+                 ("3461", "31 layers", "3, 4, 6, 1 blocks", "ResNet-34 layout, last stage cut to 1 block")]
+
+
+def draw_depth_grid(values=None, title=""):
+    # The six networks of the experiment: plain / residual x three depths. Each block is a small box coloured by
+    # stage; residual networks have an arc (the skip connection) over every block. values: {network: [text lines]}
+    grid = dict(GRID)
+    fig, ax = plt.subplots(figsize=(13, 4.8))
+    col_x, cell_w, row_y = [0.0, 4.3, 8.6], 3.7, {"plain": 2.0, "res": 0.0}
+    bw, bh, gap = 0.2, 0.42, 0.14
+    for (key, depth, blocks, ref), x0 in zip(DEPTH_COLUMNS, col_x):
+        ax.text(x0 + cell_w / 2, 4.45, depth, ha="center", fontsize=12, fontweight="bold", color="#3d3d3a")
+        ax.text(x0 + cell_w / 2, 4.12, blocks + (f"\n{ref}" if ref else ""), ha="center", va="top", fontsize=9,
+                color="#6b6a64")
+        for kind, y0 in row_y.items():
+            name = f"{kind}_{key}"
+            n_blocks = grid[name]["blocks"]
+            length = sum(n_blocks) * bw + (len(n_blocks) - 1) * gap
+            x = x0 + (cell_w - length) / 2
+            for stage, n in enumerate(n_blocks):
+                for b in range(n):
+                    ax.add_patch(Rectangle((x, y0 + 0.9), bw * 0.85, bh, color=STAGE_COLORS[stage]))
+                    if kind == "res":
+                        ax.add_patch(Arc((x + bw * 0.42, y0 + 0.9 + bh), bw * 0.95, 0.5, theta1=0, theta2=180,
+                                         color=SKIP_COLOR, lw=1.4))
+                    x += bw
+                x += gap
+            lines = values.get(name, []) if values is not None else \
+                [f"{count_params(AircraftNet({**BASE, **grid[name]}, N_CLASSES)) / 1e6:.1f}M parameters"]
+            for k, line in enumerate(lines):
+                ax.text(x0 + cell_w / 2, y0 + 0.55 - 0.42 * k, line, ha="center", va="center",
+                        fontsize=11 if k == 0 and values is not None else 9,
+                        fontweight="bold" if k == 0 and values is not None else "normal",
+                        color="#3d3d3a" if k == 0 else "#6b6a64")
+    for kind, y0 in row_y.items():
+        ax.text(-0.35, y0 + 1.1, "plain" if kind == "plain" else "residual", ha="right", va="center", fontsize=12,
+                fontweight="bold", color=SKIP_COLOR if kind == "res" else "#3d3d3a")
+    # the plain 11-layer network is the last network of the roadmap: framed in the colour of that step
+    bottom = row_y["plain"] + (-0.08 if values is not None else 0.32)
+    ax.add_patch(FancyBboxPatch((0.45, bottom), cell_w - 0.9, row_y["plain"] + 1.52 - bottom,
+                                boxstyle="round,pad=0,rounding_size=0.15", facecolor="none",
+                                edgecolor=COLORS[6], lw=1.4, ls="--"))
+    ax.text(cell_w / 2, row_y["plain"] + 1.6, "= last network of the roadmap", ha="center", va="bottom",
+            fontsize=9, color=COLORS[6])
+    # how to read the grid
+    ax.add_patch(FancyArrowPatch((0.3, -0.35), (12.0, -0.35), arrowstyle="-|>", mutation_scale=14, color="#9b9990"))
+    ax.text(6.15, -0.55, "deeper: the effect of depth", ha="center", va="top", fontsize=9.5, color="#6b6a64")
+    ax.add_patch(FancyArrowPatch((12.55, 3.3), (12.55, 1.1), arrowstyle="<|-|>", mutation_scale=14, color="#9b9990"))
+    ax.text(12.75, 2.2, "same depth:\nonly the skip\nconnections\ndiffer", ha="left", va="center", fontsize=9.5,
+            color="#6b6a64")
+    handles = [Patch(color=c, label=f"stage {i + 1} ({ch} channels)")
+               for i, (c, ch) in enumerate(zip(STAGE_COLORS, (64, 128, 256, 512)))]
+    handles.append(Patch(facecolor="none", edgecolor=SKIP_COLOR, label="skip connection"))
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=5, fontsize=8.5, frameon=False)
+    ax.set_xlim(-1.6, 14.2); ax.set_ylim(-0.95, 4.75); ax.axis("off")
+    if title:
+        ax.set_title(title, fontsize=12, loc="left")
+    plt.tight_layout(); plt.show()
+
+
+
+grid_runs = {n: seed_runs(n, "depth_residual") for n, _ in GRID}
+grid_runs = {n: r for n, r in grid_runs.items() if r}
+if len(grid_runs) == len(GRID):
+    draw_depth_grid({n: [f"{100 * seed_mean(r):.1f} ± {100 * seed_std(r):.1f}",
+                         f"training accuracy {100 * seed_mean(r, 'final_train_acc'):.1f}"]
+                     for n, r in grid_runs.items()},
+                    title="Validation accuracy (mean ± standard deviation over three seeds)")
+
+# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="RaFm2k7bQLJa" outputId="4a7e304e-7665-41ad-ad70-eea0de276bbc"
 grid_runs = {n: seed_runs(n, "depth_residual") for n, _ in GRID}
 grid_runs = {n: r for n, r in grid_runs.items() if r}
 if grid_runs:
@@ -1627,259 +1396,326 @@ if grid_runs:
 
     convs = {n: 3 + 2 * sum(dict(GRID)[n]["blocks"]) for n in grid_runs}
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
-    for kind, label, c in (
-        ("plain", "plain", COLORS[1]),
-        ("res", "residual", COLORS[0]),
-    ):
+    for kind, kind_label, c in (("plain", "plain", COLORS[1]), ("res", "residual", COLORS[0])):
         names = [n for n in grid_runs if n.startswith(kind + "_")]
         if not names:
             continue
         for ax, key in zip(axes, ("best_val_acc", "final_train_acc")):
-            ax.errorbar(
-                [convs[n] for n in names],
-                [seed_mean(grid_runs[n], key) for n in names],
-                yerr=[np.nan_to_num(seed_std(grid_runs[n], key)) for n in names],
-                fmt="o-",
-                color=c,
-                capsize=4,
-                markersize=8,
-                label=label,
-            )
+            ax.errorbar([convs[n] for n in names], [seed_mean(grid_runs[n], key) for n in names],
+                        yerr=[np.nan_to_num(seed_std(grid_runs[n], key)) for n in names],
+                        fmt="o-", color=c, capsize=4, markersize=8, label=kind_label)
     for ax, t in zip(axes, ("best validation accuracy", "final training accuracy")):
-        ax.set_xlabel("convolutional layers")
-        ax.set_ylabel(t)
-        ax.set_xticks(sorted(set(convs.values())))
-        ax.set_title(f"{t} vs depth (mean ± std over seeds)")
-        ax.legend()
-    plt.tight_layout()
-    plt.show()
+        ax.set_xlabel("convolutional layers"); ax.set_ylabel(t); ax.set_xticks(sorted(set(convs.values())))
+        ax.set_title(f"{t} vs depth (mean ± std over seeds)"); ax.legend()
+    plt.tight_layout(); plt.show()
 
-    plot_curves(
-        {n: r[0] for n, r in grid_runs.items()},
-        "depth x residual (seed 42, best learning rate)",
-    )
+    plot_curves({n: r[0] for n, r in grid_runs.items()}, "depth and residual connections (seed 42, best learning rate)")
 
 # %% [markdown]
-# ### Recipe tuning
+# **Starting point.** The plain 11-layer network is the last network of the roadmap (framed in the figure), trained
+# again with the same configuration: its seed-42 runs reproduce the numbers of the roadmap exactly, since training is
+# deterministic for a fixed seed. Its two extra seeds only add the standard deviation.
 #
-# **Grid search** (seed 42). Accuracy increases with weight decay up to 2e-3 for `plain_2222` and 5e-3 for both
-# residual networks, then drops sharply at 1e-2, so the optimum lies inside the grid. The residual networks, which fit
-# their training set more easily, need the stronger regularization. With strong weight decay, lr 0.05 is better than
-# 0.1.
+# **Degradation.** From 19 to 31 layers the plain network loses 8.3 points (55.9% → 47.6%), and its *training* accuracy
+# drops too (97.5% → 91.9%): the deeper plain network is harder to optimize — the degradation problem described in lecture 5.
+# The residual network improves at every depth (46.9% → 52.2% → 54.6%) and keeps fitting its training set: skip
+# connections make depth usable.
+#
+# **Shallow networks.** At 11 and 19 layers the residual networks are about 4 points *worse* than the plain ones, well
+# beyond the seed noise, while reaching a higher training accuracy (99% against 97–98%). Without any regularization,
+# the ease of fitting that skip connections provide turns into more overfitting on 33 images per class. If this is the
+# cause, regularization should help the residual networks more than the plain ones — the question of the next section.
 
-# %%
+# %% [markdown]
+# ## 3. The training recipe
+#
+# We regularize the three best networks of the previous experiment and tune their training recipe, combining standard
+# techniques from lecture 6 (*Regularization*):
+#
+# - **Weight decay** (lecture 6, *l2 regularization or weight decay*) penalizes large weights.
+# - **Label smoothing** (lecture 6, *Label smoothing*; Szegedy et al., 2016) replaces the one-hot target with 1−ε on the true
+#   class and ε spread over the others, so the network is not pushed towards infinite confidence.
+# - **Dropout** before the classifier (lecture 6, *Dropout*), between global pooling and the last linear layer. lecture 6 notes it is
+#   not used in ResNets, for its unclear interaction with BatchNorm (*Dropout: where*): zero is a real candidate.
+# - **Random erasing** (lecture 6, *Cutout (Random Erasing)*; Zhong et al., 2020) hides a random rectangle of the image.
+# - **Minimum crop area** of the random resized crop: smaller crops show parts of the aircraft at a larger scale
+#   (lecture 6, *multi-scale training*).
+# - **One-cycle schedule** (lecture 6, *Learning rate schedule: One cycle*; Smith & Topin, 2019): the learning rate rises over
+#   the first 30% of training, then decays to almost zero.
+#
+# ![recipe search](attachment:recipe_search.png)
+#
+# We tune the recipe in three steps, following lecture 6 (*Random hyper-parameters search*):
+#
+# 1. **Grid search on learning rate x weight decay**, the two most influential parameters, log-spaced, with the other
+#    parameters fixed (label smoothing 0.1, dropout 0.2, random erasing 0.25, minimum crop 50%, cosine schedule).
+# 2. **Random search** on the other five parameters (Bergstra & Bengio, 2012), at the best learning rate and weight
+#    decay of each network: a full grid would require 216 runs per network, so we draw 12 configurations once and
+#    train the same 12 on every network.
+# 3. **Confirmation with seeds**: the best of many single runs is partly the luckiest, so the two best configurations of
+#    each network are retrained with two more seeds and compared on the mean.
+#
+# **Networks.** The 19-layer plain network and the 31-layer residual network are the two best; the 19-layer residual
+# network is third but overfits the most, so it is the network regularization can help most. The 31-layer plain network
+# is excluded because it does not fit its training set — an optimization problem regularization cannot fix — and the
+# 11-layer networks trail the best by 5–9 points. All three
+# networks receive the same tuning budget, so that the comparison remains fair.
+#
+# **Selection rule.** The best configuration of each network by mean validation accuracy; then the best network, or
+# the simpler one if the best two are within one standard deviation.
+#
+# Mixup, CutMix and the exponential moving average of the weights (lecture 6) are left out: they mainly pay off with schedules
+# much longer than ours.
+
+# %% [markdown]
+# ### Step 1 — learning rate and weight decay
+#
+# Best validation accuracy of every point of the grid (seed 42), one panel per network; the ring marks the best point.
+
+# %% colab={"base_uri": "https://localhost:8080/"} id="T09YgdBOQLJZ" outputId="efdbbda5-052c-4e15-f47e-bebccd57ded2"
+# [run]
+names = finalists(TUNE_N)
+if names is None:
+    print("train the whole grid with all its seeds first")
+else:
+    print("networks:", ", ".join(label(n) for n in names))
+    # 1. grid search: learning rate x weight decay, the other parameters as in RECIPE
+    for name in names:
+        for lr in TUNE_LRS:
+            for wd in TUNE_WDS:
+                run_experiment(f"{name}_lr{lr:g}_wd{wd:g}", "tune_grid", note="tuning: lr x wd",
+                               **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd})
+        lr, wd = best_grid_point(name)
+        print(f"==> {label(name)}: best learning rate {lr:g}, weight decay {wd:g}\n")
+report_runs()
+
+# %% colab={"base_uri": "https://localhost:8080/", "height": 353} id="neNY--9cQLJa" outputId="be6ede74-60b1-438b-eb75-41c46a95663d"
+FIRST_GRID_MAX_WD = 2e-3      # the first grid stopped here: the larger weight decays were added afterwards
+
 names = finalists(TUNE_N) or []
 grid_runs_t = load_group("tune_grid")
-for name in names:
-    runs = {n: r for n, r in grid_runs_t.items() if n.startswith(name + "_")}
-    if runs:
-        table = pd.DataFrame(
-            {
-                f"wd {wd:g}": {
-                    f"lr {lr:g}": runs.get(f"{name}_lr{lr:g}_wd{wd:g}", {}).get(
-                        "best_val_acc", np.nan
-                    )
-                    for lr in TUNE_LRS
-                }
-                for wd in TUNE_WDS
-            }
-        )
-        print(name)
-        display(table.style.format("{:.3f}").highlight_max(axis=None, color="#cde2fb"))
+if names and grid_runs_t:
+    fig, axes = plt.subplots(1, len(names), figsize=(15, 4.2), sharey=True)
+    for ax, name in zip(axes, names):
+        ax.axvspan(np.sqrt(FIRST_GRID_MAX_WD * 5e-3), 1.6e-2, color="#f3f2ee", zorder=0)
+        ax.text(np.sqrt(5e-3 * 1e-2), 18.5, "added after\nthe first grid", ha="center", fontsize=8.5, color="#6b6a64")
+        points = []
+        for lr, c in zip(TUNE_LRS, ("#9b9990", COLORS[0])):
+            acc = [100 * grid_runs_t.get(f"{name}_lr{lr:g}_wd{wd:g}", {}).get("best_val_acc", np.nan) for wd in TUNE_WDS]
+            ax.plot(TUNE_WDS, acc, "o-", color=c, lw=2, markersize=7, label=f"learning rate {lr:g}")
+            points += zip(TUNE_WDS, acc)
+        wd, acc = max(points, key=lambda p: np.nan_to_num(p[1]))
+        ax.plot(wd, acc, "o", markersize=16, markerfacecolor="none", markeredgecolor="#3d3d3a", markeredgewidth=1.4)
+        ax.annotate(f"{acc:.1f}", (wd, acc), xytext=(0, 13), textcoords="offset points", ha="center", fontsize=9.5,
+                    color="#3d3d3a")
+        ax.set_xscale("log"); ax.set_xlim(7e-5, 1.6e-2); ax.set_ylim(15, 70)
+        ax.set_title(label(name)); ax.set_xlabel("weight decay")
+    axes[0].set_ylabel("best validation accuracy (%)"); axes[0].legend(loc="lower left", fontsize=9, frameon=False)
+    plt.tight_layout(); plt.show()
+
 
 # %% [markdown]
-# **Random search** (seed 42), sorted by the mean over the three networks; the plot shows, for each parameter value, the
-# accuracy of the runs that used it.
-#
-# The ranking is consistent across networks. The same configuration (`cfg05`: label smoothing 0.2, no dropout, random
-# erasing 0.25, minimum crop 50%, one-cycle) is the best or second best for all three. The one-cycle schedule appears in
-# the best configurations, no dropout in the two best, and random erasing at 0.5 in all of the worst ones.
+# Accuracy increases with weight decay up to **2e-3 for the plain network and 5e-3 for both residual networks**, then drops
+# sharply at 1e-2. The grid initially stopped at 2e-3, which was the best value for two networks; since an optimum at
+# the edge of a grid may lie beyond it, we extended the grid until accuracy decreased (shaded area), and the optimum now lies inside
+# it. The residual networks, which fit their training set more easily, need the stronger regularization. With strong
+# weight decay, a learning rate of 0.05 is better than 0.1.
 
-# %%
+# %% [markdown]
+# ### Step 2 — random search
+#
+# Every configuration on every network (seed 42), sorted by the mean over the networks; in the plot every configuration is a
+# line through its parameter values, ending at its mean accuracy over the three networks (blue: the two best).
+
+# %% colab={"base_uri": "https://localhost:8080/"} id="q1-jhNX7QLJZ" outputId="9dbe68bc-468e-435c-eb65-3a9d8a78fdb7"
+# [run]
+# 2. random search on the other parameters, at the best lr and weight decay of each network
+configs = random_configs()
+for name in finalists(TUNE_N):
+    lr, wd = best_grid_point(name)
+    for i, c in enumerate(configs):
+        run_experiment(f"{name}_cfg{i:02d}", "tune_random", note="tuning: random search",
+                       **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd, **c})
+report_runs()
+
+# %% colab={"base_uri": "https://localhost:8080/", "height": 754} id="0UkjEj6DQLJa" outputId="ce26e558-8779-42b3-9db8-beb361b5f4dd"
 random_runs = load_group("tune_random")
 configs = random_configs()
 if names and random_runs:
     rows = []
     for i, c in enumerate(configs):
-        row = dict(
-            cfg=f"cfg{i:02d}",
-            label_smoothing=c["label_smoothing"],
-            dropout=c["dropout"],
-            random_erasing=c["random_erasing"],
-            crop_min=c["crop_scale"][0],
-            schedule=c.get("schedule", "cosine"),
-        )
+        row = {"configuration": label(f"cfg{i:02d}"), "label smoothing": c["label_smoothing"],
+               "dropout": c["dropout"], "random erasing": c["random_erasing"], "minimum crop": c["crop_scale"][0],
+               "schedule": c.get("schedule", "cosine")}
         for name in names:
             r = random_runs.get(f"{name}_cfg{i:02d}")
-            row[name] = r["best_val_acc"] if r else np.nan
+            row[label(name)] = r["best_val_acc"] if r else np.nan
         rows.append(row)
-    table = pd.DataFrame(rows).set_index("cfg")
-    table["mean"] = table[names].mean(axis=1)
-    display(
-        table.sort_values("mean", ascending=False).style.format(
-            {n: "{:.3f}" for n in names + ["mean"]}
-        )
-    )
+    table = pd.DataFrame(rows).set_index("configuration")
+    nets = [label(n) for n in names]
+    table["mean"] = table[nets].mean(axis=1)
+    display(table.sort_values("mean", ascending=False).style.format({n: "{:.3f}" for n in nets + ["mean"]}))
 
-    params = ["label_smoothing", "dropout", "random_erasing", "crop_min", "schedule"]
-    fig, axes = plt.subplots(1, len(params), figsize=(18, 3.8), sharey=True)
-    for ax, p in zip(axes, params):
-        values = sorted(table[p].unique(), key=str)
-        for j, name in enumerate(names):
-            for k, v in enumerate(values):
-                ys = table.loc[table[p] == v, name].dropna()
-                ax.scatter(
-                    [k + (j - 1) * 0.12] * len(ys),
-                    ys,
-                    color=COLORS[j],
-                    s=28,
-                    label=name if (p == params[0] and k == 0) else None,
-                )
-        ax.set_xticks(range(len(values)), [str(v) for v in values])
-        ax.set_title(p)
-    axes[0].set_ylabel("best validation accuracy")
-    axes[0].legend(fontsize=8)
-    plt.tight_layout()
-    plt.show()
+    # parallel coordinates: one vertical axis per parameter, the last one for the mean accuracy
+    params = ["label smoothing", "dropout", "random erasing", "minimum crop", "schedule"]
+    levels = {p: sorted(table[p].unique(), key=str) for p in params}
+    lo, hi = np.floor(table["mean"].min() * 100) / 100, np.ceil(table["mean"].max() * 100) / 100
+    order = table.sort_values("mean")                       # the two most accurate, in blue, are drawn last
+    tag = dict(fc="white", ec="none", pad=1.5)
+    fig, ax = plt.subplots(figsize=(13, 4.8))
+    for rank, (cfg, row) in enumerate(order.iterrows()):
+        shift = (rank - (len(order) - 1) / 2) * 0.012       # separates the lines that share a value
+        ys = [levels[p].index(row[p]) / (len(levels[p]) - 1) + shift for p in params]
+        ys.append((row["mean"] - lo) / (hi - lo))
+        top = rank >= len(order) - 2
+        ax.plot(range(len(ys)), ys, color=(COLORS[0] if rank == len(order) - 1 else "#86b6ef") if top else "#c9c7bd",
+                lw=2.6 if top else 1.3, zorder=3 + rank)
+        if top or rank == 0:
+            ax.text(len(params) + 0.06, ys[-1], f"{cfg} ({100 * row['mean']:.1f})", va="center", fontsize=8.5,
+                    color="#3d3d3a")
+    for k, p in enumerate(params):
+        ax.axvline(k, color="#c9c7bd", lw=1, zorder=1)
+        for j, v in enumerate(levels[p]):
+            text = ("one-cycle" if v == "onecycle" else f"{v:.0%}" if p == "minimum crop" else
+                    f"{v:g}" if isinstance(v, float) else str(v))
+            ax.text(k - 0.04, j / (len(levels[p]) - 1), text, ha="right", va="center", fontsize=8.5, color="#6b6a64",
+                    bbox=tag, zorder=20)
+    ax.axvline(len(params), color="#c9c7bd", lw=1, zorder=1)
+    for v in np.arange(np.ceil(lo * 20) / 20, hi, 0.05):
+        ax.text(len(params) - 0.04, (v - lo) / (hi - lo), f"{100 * v:.0f}", ha="right", va="center", fontsize=8.5,
+                color="#6b6a64", bbox=tag, zorder=20)
+    ax.set_xticks(range(len(params) + 1), params + ["mean validation\naccuracy (%)"])
+    ax.set_yticks([]); ax.set_xlim(-0.5, len(params) + 1.1); ax.set_ylim(-0.08, 1.08)
+    ax.spines[["left", "right", "top", "bottom"]].set_visible(False); ax.grid(False)
+    ax.tick_params(axis="x", length=0)
+    plt.tight_layout(); plt.show()
+
 
 # %% [markdown]
-# **Confirmation and final choice**: the two best configurations of each network, mean ± standard deviation over
-# three seeds; summary of the best one per network:
-#
-# | network | best configuration | validation | test |
-# |---|---|---|---|
-# | `res_3461` | `cfg05`, lr 0.05, wd 5e-3 | 64.2 ± 0.3 | 64.7 ± 0.5 |
-# | `res_2222` | `cfg05`, lr 0.05, wd 5e-3 | 64.1 ± 0.7 | 64.0 ± 0.3 |
-# | `plain_2222` | `cfg05`, lr 0.05, wd 2e-3 | 63.0 ± 1.1 | 63.1 ± 0.8 |
-#
-# All three networks select the same configuration, `cfg05`: label smoothing 0.2, random erasing 0.25, crops of at least
-# 50% of the image, no dropout and a one-cycle schedule peaking at lr 0.05 (weight decay 5e-3 for the residual networks,
-# 2e-3 for the plain one). At 70 epochs the two residual networks are within 0.1 points, far less than one standard
-# deviation, so our rule would select the simpler one, `res_2222`. Since all three networks were still improving at the
-# end of training, we repeat the selection after a longer training (next section).
-#
-# Tuning confirms the hypothesis of the depth x residual experiment: without regularization the 19-layer residual
-# network was 3.7 points *worse* than the plain one; with a tuned recipe it is 1.1 points *better*. The ease of fitting
-# given by the skip connections turns into accuracy once overfitting is controlled.
+# The ranking is consistent across networks: the same configuration (configuration 5, the dark blue line) — **label smoothing 0.2, no dropout,
+# random erasing 0.25, minimum crop 50%, one-cycle schedule** — is the best or second best for all three. The one-cycle schedule
+# appears in the best configurations, no dropout in the two best — consistent with lecture 6's remark on dropout and
+# BatchNorm — and random erasing at 0.5 in all of the worst ones. Since each run changes several parameters at once,
+# these are tendencies; the ablation study measures each component in isolation.
 
-# %%
+# %% [markdown]
+# ### Step 3 — confirmation with seeds
+#
+# The two best configurations of each network, mean ± standard deviation over three seeds.
+
+# %% colab={"base_uri": "https://localhost:8080/"} id="0rA8vdCCQLJZ" outputId="f238778b-15ba-41ab-b1f1-b40f42a1ed97"
+# [run]
+# 3. confirmation: the TOP_K best configurations of each network, with the other seeds
+for name in finalists(TUNE_N):
+    for run in top_configs(name):
+        for seed in SEEDS[1:]:
+            run_experiment(f"{run['name']}_s{seed}", "tune_seeds", note="tuning: seeds",
+                           **{**run_overrides(run), "seed": seed})
+report_runs()
+
+# %% colab={"base_uri": "https://localhost:8080/", "height": 755} id="wwg-HozpQLJb" outputId="d9904fa7-5afe-40a9-d874-f876706e0cd2"
 if names:
     groups, best_per_net = {}, {}
     for name in names:
-        conf = {
-            n: runs for n, runs in confirmed(name).items() if len(runs) == len(SEEDS)
-        }
-        for n, runs in conf.items():
-            groups[f"{name} | {n.removeprefix(name + '_')}"] = runs
-        if conf:
-            best = max(conf, key=lambda n: seed_mean(conf[n]))
-            best_per_net[name] = (best, conf[best])
+        for n, runs in confirmed(name).items():
+            if len(runs) == len(SEEDS):
+                groups[f"{label(name)} | {label(n.removeprefix(name + '_'))}"] = runs
+        if best_tuned(name):
+            best_per_net[name] = best_tuned(name)
     if groups:
         display(seed_summary(groups))
-
     if len(best_per_net) == len(names):
-        ranked = sorted(best_per_net, key=lambda n: -seed_mean(best_per_net[n][1]))
-        for n in ranked:
-            cfg_name, runs = best_per_net[n]
-            print(
-                f"{n:11s} best config {cfg_name}: val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
-                f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f}"
-            )
-        first, second = ranked[0], ranked[1]
-        diff = seed_mean(best_per_net[first][1]) - seed_mean(best_per_net[second][1])
-        noise = max(seed_std(best_per_net[first][1]), seed_std(best_per_net[second][1]))
-        if diff > noise:
-            final = first
-            print(
-                f"-> {first}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})"
-            )
-        else:
-            final = min((first, second), key=simplicity)
-            print(f"-> a tie ({diff:.3f} <= {noise:.3f}): the simpler network, {final}")
-        print("final configuration:", run_overrides(best_per_net[final][1][0]))
-        plot_curves(
-            {f"{n} ({best_per_net[n][0]})": best_per_net[n][1][0] for n in ranked},
-            "best tuned configuration of each network (seed 42)",
-        )
+        ranked, selected = select({n: runs for n, (_, runs) in best_per_net.items()})
+        print("configuration:", run_overrides(best_per_net[selected][1][0]))
+        plot_curves({f"{label(n)} ({label(best_per_net[n][0].removeprefix(n + '_'))})": best_per_net[n][1][0]
+                     for n in ranked}, "best tuned configuration of each network (seed 42)")
 
 # %% [markdown]
-# ### Longer training and the final model
+# All three networks select that same configuration, which brings them to 63–64% validation accuracy, 7–12 points above their
+# unregularized versions. Tuning confirms the hypothesis of the depth experiment: without regularization
+# the 19-layer residual network was 3.7 points *worse* than the plain one; with the tuned recipe it is 1.1 points
+# *better*. The ease of fitting given by the skip connections turns into accuracy once overfitting is controlled.
 #
-# Each tuned network with its best configuration, at 70 and at 150 epochs (mean ± standard deviation over three
-# seeds), and the selection rule applied at 150 epochs. The curves compare 70 and 150 epochs for every network
-# (seed 42).
+# At 70 epochs the two residual networks are within 0.1 points, so our rule would select the simpler one. However, all
+# three networks reach their best validation accuracy in the last epochs, with a training accuracy still around 90%:
+# they are still improving when training stops.
 #
-# | network | 70 epochs (val) | 150 epochs (val) | 150 epochs (test) | gain | train accuracy at 150 |
-# |---|---|---|---|---|---|
-# | `res_3461` | 64.2 ± 0.3 | **74.0 ± 0.7** | **74.2 ± 0.2** | +9.8 | 98.2% |
-# | `plain_2222` | 63.0 ± 1.1 | 72.4 ± 0.5 | 72.0 ± 0.6 | +9.4 | 97.8% |
-# | `res_2222` | 64.1 ± 0.7 | 70.8 ± 0.4 | 71.2 ± 0.6 | +6.7 | 98.5% |
-#
-# - **Longer training adds 7–10 points** to every network, with no other change: at 70 epochs the networks were stopped
-#   too early. With the one-cycle schedule the learning rate is still high in the middle of the longer training, so
-#   the validation accuracy stays low until the final decay; the comparison is meaningful at the end of training.
-# - **Overfitting does not increase.** The gap between training and validation accuracy of `res_3461` goes from 26 points
-#   at 70 epochs to 24 at 150: the recipe tuned for 70 epochs still controls overfitting with a longer budget.
-# - **The ranking changes.** At 150 epochs `res_3461` is 1.6 points better than the second network, more than twice the
-#   run-to-run noise, so by our selection rule it is the final model. The deepest residual network benefits most from
-#   the additional training; training only the winner at 70 epochs (`res_2222`) longer would have missed it.
-#
-# **Final model: `res_3461`**, a residual network with 31 convolutional layers (stem of three 3x3 convolutions, four
-# stages of 3, 4, 6 and 1 basic blocks with 64, 128, 256 and 512 channels, global average pooling, linear classifier;
-# 11.9M parameters), trained for 150 epochs with SGD (momentum 0.9) and a one-cycle schedule peaking at lr 0.05,
-# weight decay 5e-3, label smoothing 0.2, random resized crops of at least 50% of the image, horizontal flips and random
-# erasing with p = 0.25. It reaches **74.0% ± 0.7 validation and 74.2% ± 0.2 test accuracy**. It combines every
-# component justified by the ladder and the depth x residual experiment — BatchNorm, global average pooling,
-# augmentation, a fourth stage, depth and residual connections — with a tuned training recipe.
+# **Limitation.** The search is staged — architecture first, then recipe; learning rate and weight decay before the
+# other parameters — so it assumes the effects to be roughly independent. The flip in the ranking of the 19-layer plain and
+# residual networks shows that they are not entirely: this is why we tuned three networks rather than one, and why the ablation
+# measures every component on the final model.
 
-# %%
+# %% [markdown]
+# ## 4. Longer training and the final model
+#
+# We train the three tuned networks again for **150 epochs**, each with its best configuration and no other change,
+# with three seeds each. The one-cycle schedule is defined in fractions of the training, so it stretches with the number
+# of epochs: in the middle of a longer run the learning rate is still high, and validation accuracy only rises during
+# the final decay. Since the recipe was tuned for 70 epochs, a longer training also gives more time to overfit: we check
+# that the gap between training and validation accuracy does not grow. The final model is selected with the same rule.
+
+# %% colab={"base_uri": "https://localhost:8080/"} id="eJj0cSoOQLJZ" outputId="28f103dc-8786-4326-e9ec-7d6b69800de6"
+# [run]
+for name in finalists(TUNE_N):
+    best = best_tuned(name)
+    if best is None:
+        print(f"{label(name)}: train the recipe search with all its seeds first")
+        continue
+    cfg_name, runs = best
+    print(f"{label(name)}: {label(cfg_name.removeprefix(name + '_'))}, {LONG_EPOCHS} epochs")
+    for seed in SEEDS:
+        run_experiment(f"{name}_ep{LONG_EPOCHS}_s{seed}", "long", note=f"{cfg_name}, {LONG_EPOCHS} epochs",
+                       **{**run_overrides(runs[0]), "epochs": LONG_EPOCHS, "seed": seed})
+report_runs()
+
+# %% [markdown]
+# ### Results
+#
+# Each tuned network at 70 and at 150 epochs (mean ± standard deviation over three seeds) and the selection rule at 150
+# epochs; the curves compare the two budgets (seed 42).
+
+# %% colab={"base_uri": "https://localhost:8080/", "height": 755} id="fG8OmpbpQLJb" outputId="fa7b56cd-10bf-4316-8d20-9c0dae878b85"
 names = finalists(TUNE_N) or []
-groups, long_final = {}, {}
+groups = {}
 for name in names:
-    best, runs = best_tuned(name) or (None, [])
-    if runs:
-        groups[f"{name} | {BASE['epochs']} epochs"] = runs
-    long = long_runs(name)
-    if long:
-        groups[f"{name} | {LONG_EPOCHS} epochs"] = long
-    if len(long) == len(SEEDS):
-        long_final[name] = long
+    if best_tuned(name):
+        groups[f"{label(name)} | {BASE['epochs']} epochs"] = best_tuned(name)[1]
+    if long_runs(name):
+        groups[f"{label(name)} | {LONG_EPOCHS} epochs"] = long_runs(name)
 if groups:
     display(seed_summary(groups))
 
-if names and len(long_final) == len(names):
-    ranked = sorted(long_final, key=lambda n: -seed_mean(long_final[n]))
-    for n in ranked:
-        runs = long_final[n]
-        print(
-            f"{n:11s} {LONG_EPOCHS} epochs: val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
-            f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
-            f"train {seed_mean(runs, 'final_train_acc'):.3f}"
-        )
-    first, second = ranked[0], ranked[1]
-    diff = seed_mean(long_final[first]) - seed_mean(long_final[second])
-    noise = max(seed_std(long_final[first]), seed_std(long_final[second]))
-    if diff > noise:
-        final = first
-        print(
-            f"-> {first}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})"
-        )
-    else:
-        final = min((first, second), key=simplicity)
-        print(f"-> a tie ({diff:.3f} <= {noise:.3f}): the simpler network, {final}")
-    print("final configuration:", run_overrides(long_final[final][0]))
+runs = long_final()
+if runs:
+    ranked, final = select(runs, f"{LONG_EPOCHS} epochs: ")
+    print("final configuration:", run_overrides(runs[final][0]))
     curves = {}
     for n in ranked:
-        curves[f"{n} | {BASE['epochs']} ep"] = best_tuned(n)[1][0]
-        curves[f"{n} | {LONG_EPOCHS} ep"] = long_final[n][0]
-    plot_curves(
-        curves, f"tuned networks: {BASE['epochs']} vs {LONG_EPOCHS} epochs (seed 42)"
-    )
+        curves[f"{label(n)} | {BASE['epochs']} epochs"] = best_tuned(n)[1][0]
+        curves[f"{label(n)} | {LONG_EPOCHS} epochs"] = runs[n][0]
+    plot_curves(curves, f"tuned networks: {BASE['epochs']} vs {LONG_EPOCHS} epochs (seed 42)")
 
 # %% [markdown]
-# ## Ablation of the final model
+# **Longer training adds 7–10 points** to every network, with no other change: at 70 epochs they were stopped too early.
+# **Overfitting does not increase**: the train–validation gap of the 31-layer residual network goes from 26 points at 70 epochs to 24 at
+# 150, so the recipe tuned for 70 epochs still controls overfitting with a longer budget.
 #
-# The ladder and the depth x residual experiment *added* components one at a time to a plain network. To prove that every
+# **The ranking changes.** At 150 epochs the 31-layer residual network is 1.6 points better than the second network, more than twice the
+# run-to-run noise, so by our selection rule it is the final model: the deepest residual network benefits most from the
+# additional training. Training only the winner at 70 epochs longer would have missed it.
+#
+# **Final model: the 31-layer residual network** (stem of three 3x3 convolutions; four
+# stages of 3, 4, 6 and 1 basic blocks with 64, 128, 256 and 512 channels; global average pooling; linear classifier;
+# 11.9M parameters), trained for 150 epochs with SGD (momentum 0.9), a one-cycle schedule peaking at a learning rate of 0.05, weight
+# decay 5e-3, label smoothing 0.2, random resized crops of at least 50% of the image, horizontal flips and random
+# erasing (p = 0.25): **74.0% ± 0.7 validation and 74.2% ± 0.2 test accuracy**. It combines every component justified
+# by the previous experiments — BatchNorm, global average pooling, augmentation, a fourth stage, depth and residual
+# connections — with a tuned training recipe.
+
+# %% [markdown]
+# ## 5. Ablation of the final model
+#
+# The roadmap and the depth experiment *added* components one at a time to a plain network. To prove that every
 # design choice of the **final model** contributes to its accuracy, we now do the converse: starting from the final
 # network with its final configuration (150 epochs), we **remove one component at a time**, retrain, and compare with the
 # full model. Every ablation uses the same three seeds and changes exactly one thing; learning rate, epochs and all the
@@ -1899,9 +1735,9 @@ if names and len(long_final) == len(names):
 # | `cosine` | cosine schedule with warmup instead of one-cycle | training recipe |
 # | `no_batchnorm_lr0.01`, `no_gap_lr0.01` | the same removals at a learning rate of 0.01 | control |
 #
-# **Control.** In the ladder, networks without BatchNorm or with the flatten head were unstable at the high learning
+# **Control.** In the roadmap, networks without BatchNorm or with the flatten head were unstable at the high learning
 # rates that the final model uses. A removal could then look harmful only because the learning rate does not suit it, as
-# in the learning-rate sweep of the ladder: for these two components we also train the removal at lr 0.01, and report
+# in the learning-rate sweep of the roadmap: for these two components we also train the removal at lr 0.01, and report
 # both.
 #
 # **Reading the table.** `Δ val` is the validation accuracy of the ablated network minus that of the full model; a
@@ -1911,7 +1747,7 @@ if names and len(long_final) == len(names):
 
 # %%
 # The final model (selected above) and its ablations: each one changes exactly one component of its configuration
-FINAL_NET = globals().get("final")
+FINAL_NET = final_network()
 ABLATION_GROUP = "ablation"
 ABLATION_LR_CONTROL = (
     0.01  # lr of the control runs for the components that make training unstable
@@ -1933,11 +1769,8 @@ def make_ablations(base):
         "no_label_smoothing": ("recipe", dict(label_smoothing=0.0)),
         "no_weight_decay": ("recipe", dict(weight_decay=0.0)),
         "cosine": ("recipe", dict(schedule="cosine")),
-        "no_batchnorm_lr0.01": (
-            "control",
-            dict(batchnorm=False, lr=ABLATION_LR_CONTROL),
-        ),
-        "no_gap_lr0.01": ("control", dict(gap=False, lr=ABLATION_LR_CONTROL)),
+        "no_batchnorm_lr0.01": ("control", dict(batchnorm=False, lr=ABLATION_LR_CONTROL)),
+        "no_gap_lr0.01": ("control", dict(gap=False, lr=ABLATION_LR_CONTROL))
     }
     same = lambda a, b: json.dumps(a) == json.dumps(b)  # tuples and lists compare equal
     return {
@@ -1969,6 +1802,7 @@ for name, (kind, over) in ABLATIONS.items():
             note=f"ablation: {name}",
             **{**ABLATION_BASE, **over, "seed": seed},
         )
+report_runs()
 
 # %% [markdown]
 # ### Results of the ablation
@@ -2209,6 +2043,64 @@ if ablation is not None:
     plt.show()
 
 # %% [markdown]
+# ## 6. Error analysis of the final model
+#
+# Where does the final model fail? We use the test predictions stored with each run: the per-class accuracy of the
+# three seeds and the pairs of variants the model confuses most often (seed 42). Class names are shown when the dataset
+# is available.
+
+# %%
+final = final_network()
+if final is None:
+    print("train the longer runs first")
+else:
+    names_of = globals().get("CLASSES") or [f"class {i}" for i in range(N_CLASSES)]
+    runs = long_runs(final)
+
+    # per-class test accuracy, mean over the seeds
+    per_class = []
+    for r in runs:
+        true, pred = np.array(r["test_true"]), np.array(r["test_pred"])
+        per_class.append(np.bincount(true, weights=(pred == true), minlength=N_CLASSES) / np.bincount(true, minlength=N_CLASSES))
+    per_class = np.mean(per_class, axis=0)
+
+    # most frequent confusions (seed 42)
+    true, pred = np.array(runs[0]["test_true"]), np.array(runs[0]["test_pred"])
+    cm = np.zeros((N_CLASSES, N_CLASSES), dtype=int)
+    np.add.at(cm, (true, pred), 1)
+    off = cm.copy(); np.fill_diagonal(off, 0)
+    top = np.dstack(np.unravel_index(np.argsort(off, axis=None)[::-1][:10], off.shape))[0]
+    display(pd.DataFrame([dict(true=names_of[t], predicted=names_of[p], errors=off[t, p],
+                               share_of_class=off[t, p] / cm[t].sum()) for t, p in top])
+            .style.format({"share_of_class": "{:.0%}"}))
+
+    fig, ax = plt.subplots(figsize=(8, 3.8))
+    ax.hist(per_class, bins=np.linspace(0, 1, 21), color=COLORS[0], edgecolor="white")
+    ax.axvline(per_class.mean(), color=COLORS[1], ls="--", lw=1.5, label=f"mean {per_class.mean():.1%}")
+    ax.set_xlabel("test accuracy of the class (mean over seeds)"); ax.set_ylabel("number of classes")
+    ax.set_title(f"{label(final)}: per-class test accuracy"); ax.legend()
+    plt.tight_layout(); plt.show()
+    worst = np.argsort(per_class)[:5]
+    print("hardest classes:", ", ".join(f"{names_of[i]} ({per_class[i]:.0%})" for i in worst))
+
+# %% [markdown]
+# A fine-grained task is expected to concentrate its errors on visually similar variants rather than spreading them
+# uniformly: the pairs above show which variants the model cannot yet separate, and the per-class accuracy shows how
+# unevenly the 100 classes are learned.
+
+# %% [markdown]
+# ## Conclusions
+#
+# - A plain CNN memorizes the 33 images per class of FGVC-Aircraft; BatchNorm, global average pooling and augmentation
+#   turn memorization into generalization (18.5% → 47.7%), and a fourth stage adds capacity (52.6%).
+# - Deeper plain networks degrade, while residual networks keep improving with depth — but without regularization the
+#   ease of fitting of residual networks becomes overfitting.
+# - A tuned training recipe (strong weight decay, label smoothing, random erasing, one-cycle schedule) reverses that
+#   ranking and brings every network to 63–64%; training for 150 epochs adds 7–10 more points.
+# - The final model, a 31-layer residual network, reaches **74.2% ± 0.2 test accuracy**, with every component justified
+#   by a measurement.
+
+# %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
 #
 # We now fine-tune the ResNet-18 of PyTorch (`torchvision.models.resnet18`), pretrained on ImageNet-1K (V1), on the same
@@ -2258,7 +2150,7 @@ FINETUNE = dict(
 )
 
 # sanity check: same recipe as the stored best configuration of res_3461 in Part 1, when it is available
-best = best_tuned("res_3461")
+best = best_tuned(FINAL_NET) if FINAL_NET else None
 if best is not None:
     stored = run_overrides(best[1][0])
     differences = {
@@ -2272,8 +2164,6 @@ if best is not None:
         if not differences
         else f"WARNING: differs from Part 1 (part 1, here): {differences}"
     )
-
-show_summary({**BASE, **FINETUNE})
 
 # %% [markdown]
 # ### Fine-tuning
@@ -2292,6 +2182,7 @@ for seed in SEEDS:
         seed=seed,
         **FINETUNE,
     )
+report_runs()
 
 # %% [markdown]
 # ### Results of 2A
@@ -2303,7 +2194,7 @@ for seed in SEEDS:
 finetune = load_group("finetune", RESULTS_DIR_2A)
 groups = {
     "resnet18_ft (pretrained, 2A)": list(finetune.values()),
-    "res_3461 (from scratch, part 1)": long_runs("res_3461"),
+    f"{FINAL_NET} (from scratch, part 1)": long_runs(FINAL_NET) if FINAL_NET else [],
 }
 groups = {k: v for k, v in groups.items() if v}
 if groups:
