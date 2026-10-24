@@ -7,6 +7,7 @@
 - [ ] torch view diagram (part 1) [https://github.com/mert-kurttutan/torchview]
 - [x] diagrammini di juan
 - [ ]spiegazione sul perché l'ablation della batch norm è così impattante
+- [ ] mettere la visualizzazione della rete di ale al posto di torchinfo
 
 # to remove
 
