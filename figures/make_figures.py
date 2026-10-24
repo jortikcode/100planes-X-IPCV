@@ -154,7 +154,7 @@ def depth_grid():
 
 
 def data_pipeline(image_id="0237111", dataset=Path.home() / "data" / "fgvc" / "fgvc-aircraft-2013b"):
-    # One training image through the preprocessing (once per split) and the augmentation (every batch). Needs the
+    # One training image through the preprocessing and the augmentation (every batch). Needs the
     # FGVC-Aircraft archive (the folder that torchvision.datasets.FGVCAircraft downloads).
     from PIL import Image
     size, banner = 224, 20
@@ -171,7 +171,7 @@ def data_pipeline(image_id="0237111", dataset=Path.home() / "data" / "fgvc" / "f
     top = fig.add_gridspec(1, 4, left=0.02, right=0.98, top=0.86, bottom=0.53, wspace=0.08,
                            width_ratios=[W / H, W / h, 1, 1])
     bottom = fig.add_gridspec(1, 5, left=0.02, right=0.98, top=0.37, bottom=0.03, wspace=0.08)
-    fig.text(0.02, 0.97, "Preprocessing — once per split", fontsize=12, fontweight="bold", color=INK, va="top")
+    fig.text(0.02, 0.97, "Preprocessing", fontsize=12, fontweight="bold", color=INK, va="top")
     fig.text(0.02, 0.47, "Augmentation — every training batch, different at every epoch", fontsize=12,
              fontweight="bold", color=INK, va="top")
 
