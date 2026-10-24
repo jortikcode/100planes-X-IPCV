@@ -84,7 +84,7 @@
 # session.
 
 # %%
-# %pip install -q torchinfo kagglehub gdown
+# %pip install -q torchinfo gdown
 
 # %%
 import json
@@ -118,7 +118,7 @@ print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if DEVICE.type
 # %% [markdown]
 # ### Paths
 #
-# Results and the dataset are kept in the repository (`results/`, `data/`) when the notebook runs locally, and on the
+# Experimental results and the dataset are kept locally (`results/`, `data/`) when the notebook runs locally, and on the
 # temporary disk of the session on Colab. The stored results of the project are then downloaded with `gdown` as a single archive (about 2 MB)
 
 # %%
@@ -294,51 +294,22 @@ LONG_EPOCHS = 150
 #
 # ![data pipeline](attachment:data_pipeline.png)
 #
-# **Preprocessing** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>
-# ). We then and resize the image to 224x224 *without* keeping the aspect ratio. Normalization uses the per-channel mean and standard deviation of the training split only (the pretrained network of Part 2 is the exception: it expects the statistics of ImageNet).
+# **Preprocessing** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>). We then resize the image to 224x224 *without* keeping the aspect ratio. Finally, as in VGG (Simonyan & Zisserman, 2015), we subtract the per-channel mean of the training split, and we also divide by the per-channel standard deviation, following the PyTorch convention.
 #
-# **Augmentation, on training batches only** (bottom row; lecture 6, *Data augmentation*). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe.
+# **Augmentation, on training batches only** (bottom row). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe.
 #
 # **Data loading.** The images are read and preprocessed on the fly by a `DataLoader`; the augmentation uses the
 # torchvision transforms `RandomResizedCrop`, `RandomHorizontalFlip` and `RandomErasing`. The dataset is always loaded
-# through the torchvision class; when its official server is unavailable, the identical `fgvc-aircraft-2013b` archive is
-# downloaded from a public Kaggle mirror and placed where the class expects it.
+# through the torchvision class;
 
 # %%
 from functools import cache
 
 BANNER_PX = 20
-KAGGLE_MIRROR = "seryouxblaster764/fgvc-aircraft"  # public copy of the official fgvc-aircraft-2013b archive
 IMAGENET_MEAN, IMAGENET_STD = (
     (0.485, 0.456, 0.406),
     (0.229, 0.224, 0.225),
 )  # statistics the pretrained ResNet-18 expects
-
-
-def fetch_from_kaggle(root):
-    # Download the official archive from the Kaggle mirror and place it where torchvision's FGVCAircraft expects it.
-    import kagglehub
-
-    path = Path(kagglehub.dataset_download(KAGGLE_MIRROR))
-    source = next(
-        (
-            p
-            for p in [path, *path.rglob("fgvc-aircraft-2013b")]
-            if (p / "data" / "images").is_dir()
-        ),
-        None,
-    )
-    if source is None:
-        raise RuntimeError(f"unexpected layout of the Kaggle mirror in {path}")
-    target = root / "fgvc-aircraft-2013b"
-    root.mkdir(parents=True, exist_ok=True)
-    if target.is_symlink() or target.exists():
-        if (target / "data" / "images").is_dir():
-            return
-        raise RuntimeError(
-            f"{target} exists but is incomplete: remove it and run again"
-        )
-    target.symlink_to(source, target_is_directory=True)
 
 
 NUM_WORKERS = 4 if IN_COLAB else 0   # DataLoader workers; 0 locally (notebook classes cannot be pickled by spawn)
@@ -347,25 +318,7 @@ NUM_WORKERS = 4 if IN_COLAB else 0   # DataLoader workers; 0 locally (notebook c
 @cache
 def load_split(split):
     # The torchvision dataset of one split, downloaded if needed.
-    try:
-        return datasets.FGVCAircraft(
-            DATA_ROOT, split=split, annotation_level="variant", download=True
-        )
-    except Exception as official_error:
-        # the official server is sometimes unavailable: same archive from the Kaggle mirror, still read by torchvision
-        print(
-            f"official download failed ({official_error}): using the Kaggle mirror {KAGGLE_MIRROR}"
-        )
-        try:
-            fetch_from_kaggle(DATA_ROOT)
-            return datasets.FGVCAircraft(
-                DATA_ROOT, split=split, annotation_level="variant", download=True
-            )
-        except Exception as e:
-            raise RuntimeError(
-                f"could not download FGVC-Aircraft, neither from the official server "
-                f"({official_error}) nor from Kaggle ({e})"
-            ) from e
+    return datasets.FGVCAircraft(DATA_ROOT, split=split, annotation_level="variant", download=True)
 
 
 def preprocess(img, img_size):
@@ -475,25 +428,18 @@ if data is not None:
 #
 # ![network](attachment:network.png)
 #
-# - **Stages** (lecture 5, *VGG: deep but regular*, *Stages*). The network is a stem followed by stages of identical blocks;
-#   every stage after the first halves the resolution and doubles the channels. A block is two 3x3 convolutions, which
-#   cover the receptive field of a 5x5 convolution with fewer parameters and one more non-linearity.
-# - **Stem** (lecture 5, *Stem layers*; *Further model tweaks — ResNet-C*). The resolution is reduced by 4 before the first
-#   stage, as in ResNet and GoogLeNet, since early layers detect simple patterns that need no full resolution and the
-#   blocks are 16 times cheaper at 56x56 than at 224x224. As in ResNet-C, the 7x7 convolution of ResNet is replaced by
-#   three 3x3 convolutions (32, 32, 64 channels), the first one with stride 2.
-# - **BatchNorm** (lecture 4, *Batch Norm*; Ioffe & Szegedy, 2015) normalizes the activations of each channel over the batch.
-#   It allows higher learning rates and makes initialization less critical. It is placed after every convolution,
+# - **Stages**. The network is a stem followed by stages of identical blocks; every stage after the first halves the resolution and doubles the channels. A block is two 3x3 convolutions each followed by ReLU
+# - **Stem**. The resolution is reduced by 4 before the first stage, as in ResNet and GoogLeNet, since early layers detect simple patterns that need no full resolution and the blocks are 16 times cheaper at 56x56 than at 224x224. As in ResNet-C, the 7x7 convolution of ResNet is replaced by three 3x3 convolutions (32, 32, 64 channels), each followed by a ReLU, the first one with stride 2.
+# - **BatchNorm**. normalizes the activations of each channel over the batch. *It allows higher learning rates* (in our final network it is even essential: removing it makes training collapse, with a 73-point drop in validation accuracy, and a 5× lower learning rate does not recover it; see the ablation study) and makes initialization less critical. It is placed after every convolution,
 #   before the ReLU, and the convolutions it follows have no bias.
-# - **Global average pooling** (lecture 5, *Fully-connected classifier vs global average pooling*; Lin et al., 2014) averages
+# - **Global average pooling**. averages
 #   each channel of the last feature map, replacing a flatten layer whose classifier would hold most of the parameters
 #   of the network.
-# - **Residual connections** (lecture 5, *Residual Networks*, *Residual block*, *Skip conn dimensions*; He et al., 2016).
-#   The block computes $F(x) + x$: it only has to learn a correction of the identity, and very deep networks become
+# - **Residual connections**.
+#   The block computes $f(x) + x$: it only has to learn a correction of the identity, and very deep networks become
 #   trainable. When a block changes resolution or channels, the input goes through a 1x1 convolution with BatchNorm
 #   (projection); otherwise it is added unchanged. Plain networks do not create the projections, so plain and residual
 #   versions of a network have almost the same number of parameters.
-# - **Initialization:** Kaiming normal (He et al., 2015), which keeps the scale of the activations stable through depth.
 
 # %%
 def conv_bn(c_in, c_out, k, stride, bn):
@@ -623,7 +569,7 @@ def count_gflops(model, img_size):
 SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual")
 
 torchinfo.summary(
-    AircraftNet({**BASE, **dict(GRID)["res_2222"]}, N_CLASSES),
+    AircraftNet({**BASE, **dict(GRID)["res_3461"]}, N_CLASSES),
     input_size=(1, 3, BASE["img_size"], BASE["img_size"]),
     col_names=("output_size", "num_params"),
     row_settings=("var_names",),
@@ -771,10 +717,7 @@ def fit(cfg, data, verbose=True):
 # %% [markdown]
 # ### Sanity checks
 #
-# Before trusting any experiment we verify the training pipeline (lecture 6, *A "recipe" for training NNs*, step 2: "check
-# init loss, overfit a small dataset"). At initialization the loss must be close to ln(100) ≈ 4.61, the loss of a
-# uniform guess over 100 classes; and the network must be able to memorize 100 training images. A failure would point
-# to a bug in the data, the labels or the training step.
+# Before trusting any experiment we perform a sanity check on the training pipeline, following step 2 of the training recipe of lecture 6 (A "recipe" for training NNs: "check init loss, overfit a small dataset"; <a href="https://karpathy.github.io/2019/04/25/recipe/" target="_blank">Karpathy, 2019</a>). At initialization the loss must be close to ln(100) ≈ 4.61, the loss of a uniform guess over 100 classes; and the network must be able to memorize 100 training images
 
 # %%
 if data is None:
