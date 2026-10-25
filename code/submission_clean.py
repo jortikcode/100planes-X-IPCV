@@ -72,26 +72,22 @@
 # %% [markdown]
 # ## Setup (shared by all parts)
 #
-# **How to run.** The notebook runs top to bottom, locally or on Colab, and needs no access to Google Drive. All the
-# runs reported below are stored in a shared Google Drive folder (a copy of the `results` directory) and the ones
-# missing from the local `results` directory are downloaded automatically with `gdown`. With `TRAIN = False` (the
-# default) the notebook only loads the stored results and shows its tables and plots: no dataset and no training are
-# needed. With `TRAIN = True` the training cells (final model, ablation, Part 2A) download the dataset and train the
-# runs whose result does not exist yet; `RETRAIN = True` trains them again even if it exists. The images are read and
-# preprocessed on the fly, on the CPU. Locally, results are kept in the `results` directory of the repository and the
-# dataset in its `data` directory (git-ignored, created if missing); on Colab both stay on the temporary disk of the
-# session.
+# **How to run.** The notebook runs top to bottom, locally or on Colab. All the runs reported below are stored in a
+# shared Google Drive folder (a copy of the `results` directory), downloaded automatically with `gdown` as a single
+# archive. The dataset is downloaded by torchvision on first use. With `TRAIN = False` (the default) the notebook only loads
+# the stored results and shows its tables and plots, with no training. With `TRAIN = True` the training cells (final
+# model, ablation, Part 2A) train the runs whose result does not exist yet; `RETRAIN = True` trains them again even if
+# it exists. If the dataset cannot be downloaded, the cells that need the images are skipped and the stored results
+# are still loaded and shown. The images are read and preprocessed on the fly, on the CPU. Locally, results are kept in the `results`
+# directory of the repository and the dataset in its `data` directory (git-ignored, created if missing); on Colab both
+# stay on the temporary disk of the session.
 #
 # **Note.** The stored results were produced with an equivalent pipeline that kept the dataset on the GPU and
 # computed the augmentation on the GPU with mixed precision. The training code of this notebook is the same algorithm
 # with standard torchvision transforms in float32, so retraining gives similar, not identical, numbers.
 
 # %%
-<<<<<<< HEAD
 # %pip install -q gdown
-=======
-# %pip install -q torchinfo gdown
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 
 # %%
 import json
@@ -117,19 +113,10 @@ from tqdm.auto import tqdm
 IN_COLAB = "google.colab" in sys.modules
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-<<<<<<< HEAD
-TRAIN = False  # True: run the training cells (final model, ablation, Part 2A) and download the dataset
+TRAIN = False  # True: run the training cells (final model, ablation, Part 2A)
 RETRAIN = False  # True: with TRAIN, retrain the runs whose JSON already exists too
-print(
-    f"device: {DEVICE}"
-    + (f" ({torch.cuda.get_device_name()})" if DEVICE.type == "cuda" else "")
-    + f" | torch {torch.__version__}"
-)
-=======
-RETRAIN = False  # True: retrain runs even if their JSON already exists
 print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if DEVICE.type == "cuda" else "")
       + f" | torch {torch.__version__}")
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 
 # %% [markdown]
 # ### Paths
@@ -312,12 +299,7 @@ LONG_EPOCHS = 150
 #
 # **Preprocessing** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>). We then resize the image to 224x224 *without* keeping the aspect ratio. Finally, as in VGG (Simonyan & Zisserman, 2015), we subtract the per-channel mean of the training split, and we also divide by the per-channel standard deviation, following the PyTorch convention.
 #
-<<<<<<< HEAD
-# The images are read and preprocessed on the fly, with no cache. The dataset is always loaded through
-# `torchvision.datasets.FGVCAircraft`, which downloads it into `data/` the first time.
-=======
 # **Augmentation, on training batches only** (bottom row). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe.
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 #
 # **Data loading.** The images are read and preprocessed on the fly by a `DataLoader`; the augmentation uses the
 # torchvision transforms `RandomResizedCrop`, `RandomHorizontalFlip` and `RandomErasing`. The dataset is always loaded
@@ -327,24 +309,12 @@ LONG_EPOCHS = 150
 from functools import cache
 
 BANNER_PX = 20
-<<<<<<< HEAD
-NUM_WORKERS = 4 if IN_COLAB else 0  # DataLoader workers; 0 locally (notebook classes cannot be pickled by spawn)
-=======
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 IMAGENET_MEAN, IMAGENET_STD = (
     (0.485, 0.456, 0.406),
     (0.229, 0.224, 0.225),
 )  # statistics the pretrained ResNet-18 expects
 
 
-<<<<<<< HEAD
-@cache
-def load_split(split):
-    # The torchvision dataset of one split, downloaded if needed.
-    return datasets.FGVCAircraft(
-        DATA_ROOT, split=split, annotation_level="variant", download=True
-    )
-=======
 NUM_WORKERS = 4 if IN_COLAB else 0   # DataLoader workers; 0 locally (notebook classes cannot be pickled by spawn)
 
 
@@ -352,7 +322,6 @@ NUM_WORKERS = 4 if IN_COLAB else 0   # DataLoader workers; 0 locally (notebook c
 def load_split(split):
     # The torchvision dataset of one split, downloaded if needed.
     return datasets.FGVCAircraft(DATA_ROOT, split=split, annotation_level="variant", download=True)
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 
 
 def preprocess(img, img_size):
@@ -434,12 +403,6 @@ def batches(split, data, cfg, train):
         yield x.to(DEVICE), y.to(DEVICE)
 
 
-<<<<<<< HEAD
-# %% [markdown]
-# Six training images as the network receives them (top) and after crop and flip (bottom).
-
-# %%
-=======
 # %% colab={"base_uri": "https://localhost:8080/", "height": 627, "referenced_widgets": ["56021d40a2a24aeb8e4ce236e7148752", "6bfaa424ab0c4850a6178b86192df164", "56d0fbce688e46be90203013770b34f0", "8fd45dc7b2f34c8b991c5e0c6372b909", "384e443d54af484388c872cd9c651db6", "a5ecdadd79b54812b504fbdb18a9e77a", "02254a46ef3a4539b3e88e2c76de0b54", "3bdf4bc01bd04181857632f348b260b2", "f83a31387aff4eff9ef9ca5018fb8480", "876bf5b0cca245798b08a3e1766fa7b0", "9523291372d048e4bdad61970d4317c5", "d00deb33dced4c739082b3f66fe2f28a", "54644bff45634c01ba9e198d92dda2a3", "c55a9f91ffa4417ca5953e7980538c54", "235f4ce923b34c8fa7a67eb53c9ce437", "f3aa4a0d36b4401dba9f15d53928dd12", "a7be3d6e83bd43c9ab94d446a3a84092", "3be9ba871a9b47a6966b9a407541e07f", "44a0209d1dd24772bba80aaec434ec2b", "24a8fb733b6149f8bed15a6f62f533a3", "63168f7aedf14b8baf77319c63b9e1e8", "f9ccf2160eb34d3a83c04c8123d81006", "18a3bab19b14462b94c01db5d92d4e5a", "3d89a74f9dd24957a44885ee6b678ab7", "7c651a7c0668478584b8a36e77df11e5", "0e5caa1c119d4c25a340b93b9a273426", "842d760ac3fc4f4b88ea9810b87842b3", "ff48c049053b4ab6a5be12897136ee39", "e9c5b8b8a0af4a5c94c7c9921a9f794f", "9dc002e952fa4947b0cc0d5f3fcaefeb", "4ce45873e5b448128bc1e50bcf8c2736", "5809a734924c49dca6fec8b08bcfea63", "08f8bcd48a7f4c799c71e80e8ca1709e"]} id="Mt7nFLOrQLJX" outputId="b731a5fa-81ae-4e7a-f570-21b36df716db"
 try:
     data = get_data(BASE["img_size"])
@@ -450,12 +413,8 @@ except Exception as e:
         "The cells that need the images are skipped; the stored results are still loaded and shown."
     )
 
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 N_CLASSES = 100  # FGVC-Aircraft, annotation_level="variant"
-data = get_data(BASE["img_size"]) if TRAIN else None   # the dataset is only needed to train (or to show the images)
-if data is None:
-    print("TRAIN = False: the sample images are not shown (they need the dataset)")
-else:
+if data is not None:
     CLASSES = data["train"].classes
     assert len(CLASSES) == N_CLASSES
     print(
@@ -605,27 +564,15 @@ def count_gflops(model, img_size):
     return 2 * macs / 1e9
 
 
-<<<<<<< HEAD
-=======
 # %% [markdown]
-# Layer-by-layer summary of one network (`torchinfo`).
+# The final network of the study (residual, 3, 4, 6, 1 blocks per stage: 31 convolutional layers), with the number of
+# channels and the spatial resolution of every stage.
+#
+# ![final network](attachment:part1_network.png)
 
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 # %%
 # the keys that only describe AircraftNet: a pretrained run does not store them
 SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual")
-
-<<<<<<< HEAD
-=======
-torchinfo.summary(
-    AircraftNet({**BASE, **dict(GRID)["res_3461"]}, N_CLASSES),
-    input_size=(1, 3, BASE["img_size"], BASE["img_size"]),
-    col_names=("output_size", "num_params"),
-    row_settings=("var_names",),
-    depth=4,
-    device="cpu",
-    verbose=0,
-)
 
 # %% [markdown]
 # Size and cost of every network of the study. With the flatten classifier (the plain VGG and the network with
@@ -650,7 +597,6 @@ pd.DataFrame(rows).set_index("run").style.format(
     {"params_M": "{:.2f}", "head_share": "{:.0%}", "GFLOPs": "{:.2f}"}
 )
 
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 
 # %% [markdown]
 # ## Training
@@ -765,17 +711,6 @@ def fit(cfg, data, verbose=True):
 
 
 # %% [markdown]
-<<<<<<< HEAD
-# ## Experiment runner
-#
-# `run_experiment` trains one configuration (in `results/part1`, or in the directory given by `results_dir`), evaluates its best checkpoint on the test split and stores the
-# configuration, the per-epoch curves and the test predictions. The runs of the ladder, of the depth x residual comparison and of the recipe search were obtained by calling it for
-# every configuration at the three learning rates of the sweep (seed 42), and then with two more seeds at the best
-# learning rate. Note that the seed-42
-# run of a configuration is the best of three learning rates, hence slightly optimistic; the two additional seeds are
-# not.
-
-=======
 # ### Sanity checks
 #
 # Before trusting any experiment we perform a sanity check on the training pipeline, following step 2 of the training recipe of lecture 6 (A "recipe" for training NNs: "check init loss, overfit a small dataset"; <a href="https://karpathy.github.io/2019/04/25/recipe/" target="_blank">Karpathy, 2019</a>). At initialization the loss must be close to ln(100) ≈ 4.61, the loss of a uniform guess over 100 classes; and the network must be able to memorize 100 training images
@@ -813,22 +748,19 @@ else:
 # %% [markdown]
 # ## Experiment runner
 #
-# The runner trains one configuration (in `results/part1`, or in the directory given by `results_dir` for Part 2), evaluates its best checkpoint on the test split and stores the configuration,
-# the per-epoch curves and the test predictions; a run whose result already exists with the same configuration is
-# loaded instead of trained. Every configuration is first trained at the three learning rates (seed 42), then with two
-# more seeds at its best learning rate when the experiment requires it. The seed-42 result is the best of three learning
-# rates, hence slightly optimistic; the two other seeds are not. The plotting helpers used in the rest of the notebook
-# follow.
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
+# `run_experiment` trains one configuration (in `results/part1`, or in the directory given by `results_dir` for Part 2),
+# evaluates its best checkpoint on the test split and stores the configuration, the per-epoch curves and the test
+# predictions; a run whose result already exists with the same configuration is loaded instead of trained. The runs of
+# the roadmap, of the depth and residual comparison and of the recipe search were obtained by calling it for every
+# configuration at the three learning rates of the sweep (seed 42), and then with two more seeds at the best learning
+# rate. The seed-42 result is the best of three learning rates, hence slightly optimistic; the two other seeds are not.
+# The plotting helpers used in the rest of the notebook follow.
 
 # %%
 def result_path(name, group, seed, results_dir=None):
     return (results_dir or RESULTS_DIR) / group / f"{name}_seed{seed}.json"
 
 
-<<<<<<< HEAD
-def run_experiment(name, group, note="", results_dir=None, **overrides):
-=======
 _LOADED = 0  # stored runs loaded since the last report_runs()
 
 
@@ -842,43 +774,20 @@ def report_runs():
 
 def run_experiment(name, group, note="", results_dir=None, **overrides):
     global _LOADED
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
     cfg = {**BASE, **overrides, "name": name, "group": group}
     if cfg.get("pretrained", False):  # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
         cfg = {k: v for k, v in cfg.items() if k not in SCRATCH_ONLY_KEYS}
     out = result_path(name, group, cfg["seed"], results_dir)
-    if out.exists() and not RETRAIN:
+    if not RETRAIN and out.exists():
         run = json.loads(out.read_text())
         if run["config"] == json.loads(json.dumps(cfg)):  # same configuration (tuples stored as lists)
             _LOADED += 1
             return run
-        print(f"{group}/{name}: configuration changed since the stored run, training again")
+        print(f"{group}/{name}: the configuration changed since the stored run, training")
 
-<<<<<<< HEAD
-    print(f"### {group}/{name}")
-    print(
-        "    "
-        + " | ".join(
-            f"{k} {cfg[k]}"
-            for k in (
-                "lr",
-                "weight_decay",
-                "label_smoothing",
-                "dropout",
-                "random_erasing",
-                "augment",
-                "crop_scale",
-                "seed",
-                "epochs",
-            )
-        )
-        + f" | schedule {cfg.get('schedule', 'cosine')}"
-    )
-=======
     shown = ("lr", "weight_decay", "label_smoothing", "dropout", "random_erasing", "augment", "crop_scale", "seed", "epochs")
     print(f"### {group}/{name}\n    " + " | ".join(f"{k} {cfg[k]}" for k in shown)
           + f" | schedule {cfg.get('schedule', 'cosine')}")
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
     fix_random(cfg["seed"])
     data = get_data(cfg["img_size"], cfg.get("pretrained", False))
     t0 = time.time()
@@ -913,6 +822,23 @@ def load_group(group, results_dir=None):
     return {r["name"]: r for r in runs}
 
 
+def run_overrides(run):
+    # The overrides that reproduce a stored run (everything but its name, group and seed).
+    return {
+        k: v for k, v in run["config"].items() if k not in ("name", "group", "seed")
+    }
+
+
+def seed_mean(runs, key="best_val_acc"):
+    return float(np.mean([r[key] for r in runs]))
+
+
+def seed_std(runs, key="best_val_acc"):
+    return (
+        float(np.std([r[key] for r in runs], ddof=1)) if len(runs) > 1 else float("nan")
+    )
+
+
 def sweep_runs(runs, name):
     # The seed-42 runs of one configuration of the sweep, keyed by learning rate.
     return {
@@ -932,31 +858,6 @@ def best_of(runs, name):
     return max(swept.values(), key=lambda r: r["best_val_acc"])
 
 
-<<<<<<< HEAD
-=======
-def run_sweep(name, group, note="", **overrides):
-    for lr in LR_SWEEP:
-        run_experiment(f"{name}_lr{lr:g}", group, note=note, **{**overrides, "lr": lr})
-    best = best_of(load_group(group), name)
-    print(f"==> {label(name)}: best learning rate {best['config']['lr']:g} | validation {best['best_val_acc']:.3f} | "
-          f"test {best['test_acc']:.3f}")
-    return best
-
-
-def run_seeds(name, group, note="", **overrides):
-    # The other seeds, at the learning rate that won the sweep of this configuration.
-    lr = best_of(load_group(group), name)["config"]["lr"]
-    for seed in SEEDS[1:]:
-        run_experiment(
-            f"{name}_lr{lr:g}_s{seed}",
-            f"{group}_seeds",
-            note=note,
-            seed=seed,
-            **{**overrides, "lr": lr},
-        )
-
-
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 def seed_runs(name, group):
     # Every seed of one configuration at its best learning rate: [seed 42 (from the sweep), seed 43, seed 44].
     best = best_of(load_group(group), name)
@@ -969,271 +870,6 @@ def seed_runs(name, group):
         if f"{name}_lr{lr:g}_s{s}" in others
     ]
 
-
-def seed_mean(runs, key="best_val_acc"):
-    return float(np.mean([r[key] for r in runs]))
-
-
-def seed_std(runs, key="best_val_acc"):
-    return (
-        float(np.std([r[key] for r in runs], ddof=1)) if len(runs) > 1 else float("nan")
-    )
-
-
-def finalists(n=TUNE_N):
-    # The n networks of the grid with the highest mean validation accuracy over the seeds.
-    done = {name: seed_runs(name, "depth_residual") for name, _ in GRID}
-    if any(len(r) < len(SEEDS) for r in done.values()):
-        return None
-    return sorted(done, key=lambda name: -seed_mean(done[name]))[:n]
-
-
-def simplicity(name):
-    # Sort key: fewer blocks first, then plain before residual.
-    over = dict(GRID)[name]
-    return (sum(over["blocks"]), over["residual"])
-
-
-def random_configs():
-    # The N_RANDOM configurations of the random search: drawn once, identical for every network.
-    rng = np.random.RandomState(SEARCH_SEED)
-    configs, seen = [], set()
-    while len(configs) < N_RANDOM:
-        cfg = {k: v[rng.randint(len(v))] for k, v in SEARCH_SPACE.items()}
-        key = json.dumps(cfg)
-        if key not in seen:
-            seen.add(key)
-            if cfg["schedule"] == "cosine":
-                del cfg[
-                    "schedule"
-                ]  # cosine is the default: keep the stored config minimal
-            configs.append(cfg)
-    return configs
-
-
-def run_overrides(run):
-    # The overrides that reproduce a stored run (everything but its name, group and seed).
-    return {
-        k: v for k, v in run["config"].items() if k not in ("name", "group", "seed")
-    }
-
-
-def runs_of(group, name):
-    # The runs of one network in a group, keyed by run name.
-    return {n: r for n, r in load_group(group).items() if n.startswith(name + "_")}
-
-
-def tuning_runs(name):
-    # Every seed-42 run of the recipe search (grid + random) of one network, keyed by run name.
-    return {**runs_of("tune_grid", name), **runs_of("tune_random", name)}
-
-
-def best_grid_point(name):
-    grid = runs_of("tune_grid", name)
-    if len(grid) < len(TUNE_LRS) * len(TUNE_WDS):
-        return None
-    best = max(grid.values(), key=lambda r: r["best_val_acc"])
-    return best["config"]["lr"], best["config"]["weight_decay"]
-
-
-def top_configs(name):
-    # The TOP_K best runs of the search of one network (seed 42).
-    runs = tuning_runs(name)
-    return sorted(runs.values(), key=lambda r: -r["best_val_acc"])[:TOP_K]
-
-
-def confirmed(name):
-    # {run name: [seed 42, 43, 44]} for the TOP_K configurations of one network.
-    seeds = load_group("tune_seeds")
-    return {
-        r["name"]: [r]
-        + [
-            seeds[f"{r['name']}_s{s}"]
-            for s in SEEDS[1:]
-            if f"{r['name']}_s{s}" in seeds
-        ]
-        for r in top_configs(name)
-    }
-
-
-def best_tuned(name):
-    # (configuration name, [runs over the seeds]) of the best configuration of the recipe search of one network.
-    conf = {n: runs for n, runs in confirmed(name).items() if len(runs) == len(SEEDS)}
-    if not conf:
-        return None
-    best = max(conf, key=lambda n: seed_mean(conf[n]))
-    return best, conf[best]
-
-
-def long_runs(name):
-    # The longer trainings of one network, over the seeds.
-    group = load_group("long")
-    return [
-        group[f"{name}_ep{LONG_EPOCHS}_s{s}"]
-        for s in SEEDS
-        if f"{name}_ep{LONG_EPOCHS}_s{s}" in group
-    ]
-
-
-def select(runs_by_net, prefix="", verbose=True):
-    # The selection rule: highest mean validation accuracy over the seeds; if the best two are within one standard
-    # deviation of each other, the simpler network. Returns (ranked names, selected name).
-    ranked = sorted(runs_by_net, key=lambda n: -seed_mean(runs_by_net[n]))
-    first, second = ranked[0], ranked[1]
-    diff = seed_mean(runs_by_net[first]) - seed_mean(runs_by_net[second])
-    noise = max(seed_std(runs_by_net[first]), seed_std(runs_by_net[second]))
-    selected = first if diff > noise else min((first, second), key=simplicity)
-    if verbose:
-        for n in ranked:
-            runs = runs_by_net[n]
-            print(f"{label(n):20s} {prefix}validation {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
-                  f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
-                  f"train {seed_mean(runs, 'final_train_acc'):.3f}")
-        print(f"-> {label(first)}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})" if diff > noise
-              else f"-> a tie ({diff:.3f} <= {noise:.3f}): the simpler network, {label(selected)}")
-    return ranked, selected
-
-<<<<<<< HEAD
-# %% [markdown]
-# ## Depth x residual
-#
-# We replicate at small scale the central experiment of He et al. (CVPR 2016): **identical plain and residual networks
-# at increasing depth**. All six networks are s4 (BatchNorm, GAP, crop and flip, four stages of 64 to 512 channels) with
-# a different number of blocks per stage, with and without skip connections:
-#
-# | blocks per stage | convolutional layers | parameters | motivation |
-# |---|---|---|---|
-# | `[1,1,1,1]` | 11 | 4.8M | s4 itself, the shallow reference |
-# | `[2,2,2,2]` | 19 | 11.1M | the stage layout of ResNet-18; at this depth He et al. find plain and residual networks on par |
-# | `[3,4,6,1]` | 31 | 11.8M | the layout of ResNet-34 with a single block in the last stage; at 34 layers He et al. find the plain network *worse* than its shallower version and the residual one better |
-#
-# We use `[3,4,6,1]` rather than the full `[3,4,6,3]` (21.4M parameters) because a 512-channel block alone costs 4.7M
-# parameters: the additional depth goes into the first three stages, where it is cheap.
-#
-# **Reading the results.** Within a depth, plain and residual networks differ only by the skip connections. Across
-# depths more changes than depth (`[3,4,6,1]` also redistributes capacity and doubles the compute), so a drop of the
-# plain network with depth is meaningful only if the residual network with the same layout does not drop. The
-# signature of degradation is in the *training* accuracy: a network that is harder to optimize fits its training set
-# worse, whereas an overfitting one fits it better.
-
-# %% [markdown]
-# ### Seeds
-#
-# Run-to-run variation (initialization, data order, augmentation) is easily 1–2 points on 3,333 validation images,
-# comparable to the differences between several networks. We train every network with two more seeds at its best
-# learning rate and compare means.
-
-# %% [markdown]
-# ## The training recipe
-#
-# We now regularize the three best networks of the depth x residual experiment and tune their training recipe. The
-# recipe combines standard techniques from lecture 6:
-#
-# | component | effect | reference |
-# |---|---|---|
-# | weight decay (not on BN/bias) | penalizes large weights | l2 regularization, lecture 6 |
-# | label smoothing | target of 1−ε on the true class, ε spread over the others: the network is not pushed towards infinite confidence | Szegedy et al., CVPR 2016 |
-# | dropout before the classifier | randomly drops features during training; placed between global pooling and the last linear layer | Srivastava et al., JMLR 2014 |
-# | random erasing | hides a random rectangle of the image | Zhong et al., AAAI 2020 |
-# | minimum crop area | smaller crops show parts of the aircraft at a larger scale (multi-scale training) | lecture 6 |
-# | one-cycle schedule | the learning rate rises over the first 30% of training, then decays | Smith & Topin, 2019 |
-#
-# We tune it in three steps, following the hyperparameter search of lecture 6:
-#
-# 1. **Grid search on learning rate x weight decay** (log-spaced), the two most influential parameters: learning rate
-#    0.1 and 0.05, weight decay from 1e-4 to 1e-2. During this step the other parameters are fixed (label smoothing
-#    0.1, dropout 0.2, random erasing 0.25, minimum crop 50%, cosine schedule). The grid initially stopped at 2e-3,
-#    which turned out to be the best value for two networks; since an optimum at the edge of a grid may lie beyond it,
-#    we extended the grid until accuracy decreased.
-# 2. **Random search on the other parameters** (Bergstra & Bengio, JMLR 2012), at the best learning rate and weight
-#    decay of each network. A full grid on these five parameters would require 216 runs per network; we draw 12
-#    configurations once and train the same 12 on every network.
-# 3. **Confirmation with seeds.** The best of many single runs is partly the luckiest one, so we retrain the two best
-#    configurations of each network with two more seeds and compare means.
-#
-# | parameter | values | note |
-# |---|---|---|
-# | label smoothing | 0, 0.05, 0.1, 0.2 | |
-# | dropout | 0, 0.2, 0.5 | dropout is not used in ResNets, for its unclear interaction with BatchNorm (lecture 6), so 0 is a real candidate |
-# | random erasing | p = 0, 0.25, 0.5 | the original papers use 0.5 |
-# | minimum crop area | 25%, 35%, 50% | |
-# | schedule | cosine with warmup, one-cycle | |
-#
-# We leave out Mixup, CutMix, TrivialAugment and stochastic depth, which make the training task much harder and pay off
-# only with schedules much longer than 70 epochs, and the exponential moving average of the weights, which mainly helps
-# at the end of long trainings: they are candidates for a final, longer training.
-#
-# **Networks.** We tune `plain_2222` and `res_3461`, the two best networks, and `res_2222`, the third: it has the
-# highest training accuracy of the experiment, i.e. it overfits the most, so it is the network a stronger regularization
-# can help most. We exclude `plain_3461`, which does not fit its training set (an optimization problem that
-# regularization cannot fix), and the two 11-layer networks, which trail the best ones by 5–9 points. All three networks
-# receive the same tuning budget, so that the final comparison is fair.
-#
-# **Selection rule.** For each network we take its best configuration by mean validation accuracy over the seeds; the
-# final network is the one with the highest mean, and if the two best are within one standard deviation of each other,
-# the simpler one.
-#
-# **Limitation.** The search proceeds in two stages: the learning rate and weight decay are chosen with fixed values of
-# the other parameters, so they are not guaranteed to be jointly optimal with the configuration found by the random
-# search.
-
-# %% [markdown]
-# ## Longer training
-#
-# The training recipe was tuned with a budget of 70 epochs, and the best runs of the three tuned networks reach their
-# best validation accuracy in the last epochs, with a training accuracy still around 90%: they are still improving
-# when training stops. We therefore train the three networks again for **150 epochs**, each with its own best
-# configuration and **no other change** — no additional regularization or augmentation — with three seeds each. The
-# one-cycle schedule is defined in fractions of the training, so it stretches with the number of epochs.
-#
-# Since the recipe was tuned for 70 epochs, a longer training gives the networks more time to overfit: we check that
-# the gap between training and validation accuracy does not grow. The final model is selected with the same rule as
-# before, now at 150 epochs.
-
-# %%
-# [run]
-# The final model: res_3461 with the best configuration of its recipe search (cfg05), trained for LONG_EPOCHS epochs
-FINAL_NAME = "res_3461"
-FINAL_CONFIG = {
-    **dict(GRID)[FINAL_NAME],
-    **RECIPE,
-    "lr": 0.05,
-    "weight_decay": 5e-3,
-    "label_smoothing": 0.2,
-    "dropout": 0.0,
-    "random_erasing": 0.25,
-    "crop_scale": (0.5, 1.0),
-    "schedule": "onecycle",
-    "epochs": LONG_EPOCHS,
-}
-if TRAIN:
-    for seed in SEEDS:
-        run_experiment(
-            f"{FINAL_NAME}_ep{LONG_EPOCHS}_s{seed}",
-            "long",
-            note=f"cfg05, {LONG_EPOCHS} epochs",
-            **{**FINAL_CONFIG, "seed": seed},
-        )
-
-# %% [markdown]
-# ## Results
-#
-# All tables and plots below are computed from the stored runs.
-
-# %%
-=======
-
-def long_final():
-    # {network: [runs over the seeds]} at LONG_EPOCHS, for the tuned networks; None until all are trained.
-    names = finalists(TUNE_N) or []
-    runs = {n: long_runs(n) for n in names}
-    return runs if names and all(len(r) == len(SEEDS) for r in runs.values()) else None
-
-
-def final_network():
-    # The final model: the selection rule applied after the longer training (None until it is trained).
-    runs = long_final()
-    return select(runs, verbose=False)[1] if runs else None
 
 
 # %% id="7KjzoXrcQLJa"
@@ -1262,7 +898,6 @@ def label(name):
     return name
 
 
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 # Categorical colours in a fixed order (one per run inside a plot)
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 plt.rcParams.update({"axes.prop_cycle": plt.cycler(color=COLORS), "lines.linewidth": 2,
@@ -1328,12 +963,6 @@ def plot_curves(runs, title=""):
 # - **+ crop and flip** show a different version of every image at every epoch, so the training set can no longer be
 #   memorized exactly.
 # - **+ a fourth stage** adds capacity and receptive field once the network is regularized.
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="nzWzW-VHQLJY" outputId="f0273c3c-3215-4c10-a775-9fae97790954"
-# [run]
-for name, over in LADDER:
-    run_sweep(name, "ladder", **over)
-report_runs()
 
 # %% [markdown]
 # ### Results
@@ -1419,21 +1048,6 @@ if ladder:
 # **higher training error**, so the problem is optimization, not overfitting: this is the signature to look for in the
 # training accuracy. Each network is trained at three learning rates, then with two more seeds at its best one, since
 # run-to-run variation (1–2 points) is comparable to the differences between networks.
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="eKrS-l2IQLJY" outputId="e36a9123-872c-4aaa-9d15-5833f87ec4cc"
-# [run]
-for name, over in GRID:
-    run_sweep(name, "depth_residual", **over)
-report_runs()
-
-# %% [markdown]
-# Two more seeds for every network, at its best learning rate.
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="QvW1iyfAQLJY" outputId="8145b6e1-9703-4e0e-8192-054a83c68482"
-# [run]
-for name, over in GRID:
-    run_seeds(name, "depth_residual", note="seeds", **over)
-report_runs()
 
 # %% [markdown]
 # ### Results
@@ -1541,6 +1155,7 @@ if grid_runs:
 
     plot_curves({n: r[0] for n, r in grid_runs.items()}, "depth and residual connections (seed 42, best learning rate)")
 
+
 # %% [markdown]
 # **Starting point.** The plain 11-layer network is the last network of the roadmap (framed in the figure), trained
 # again with the same configuration: its seed-42 runs reproduce the numbers of the roadmap exactly, since training is
@@ -1597,27 +1212,115 @@ if grid_runs:
 # Mixup, CutMix and the exponential moving average of the weights (lecture 6) are left out: they mainly pay off with schedules
 # much longer than ours.
 
+# %%
+# The selection rule, and the networks of the grid that enter the recipe search.
+
+def finalists(n=TUNE_N):
+    # The n networks of the grid with the highest mean validation accuracy over the seeds.
+    done = {name: seed_runs(name, "depth_residual") for name, _ in GRID}
+    if any(len(r) < len(SEEDS) for r in done.values()):
+        return None
+    return sorted(done, key=lambda name: -seed_mean(done[name]))[:n]
+
+
+def simplicity(name):
+    # Sort key: fewer blocks first, then plain before residual.
+    over = dict(GRID)[name]
+    return (sum(over["blocks"]), over["residual"])
+
+
+def select(runs_by_net, prefix="", verbose=True):
+    # The selection rule: highest mean validation accuracy over the seeds; if the best two are within one standard
+    # deviation of each other, the simpler network. Returns (ranked names, selected name).
+    ranked = sorted(runs_by_net, key=lambda n: -seed_mean(runs_by_net[n]))
+    first, second = ranked[0], ranked[1]
+    diff = seed_mean(runs_by_net[first]) - seed_mean(runs_by_net[second])
+    noise = max(seed_std(runs_by_net[first]), seed_std(runs_by_net[second]))
+    selected = first if diff > noise else min((first, second), key=simplicity)
+    if verbose:
+        for n in ranked:
+            runs = runs_by_net[n]
+            print(f"{label(n):20s} {prefix}validation {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
+                  f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
+                  f"train {seed_mean(runs, 'final_train_acc'):.3f}")
+        print(f"-> {label(first)}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})" if diff > noise
+              else f"-> a tie ({diff:.3f} <= {noise:.3f}): the simpler network, {label(selected)}")
+    return ranked, selected
+
+
+
+# %%
+# The three steps of the recipe search: grid, random configurations, confirmation with seeds.
+
+def random_configs():
+    # The N_RANDOM configurations of the random search: drawn once, identical for every network.
+    rng = np.random.RandomState(SEARCH_SEED)
+    configs, seen = [], set()
+    while len(configs) < N_RANDOM:
+        cfg = {k: v[rng.randint(len(v))] for k, v in SEARCH_SPACE.items()}
+        key = json.dumps(cfg)
+        if key not in seen:
+            seen.add(key)
+            if cfg["schedule"] == "cosine":
+                del cfg[
+                    "schedule"
+                ]  # cosine is the default: keep the stored config minimal
+            configs.append(cfg)
+    return configs
+
+
+def runs_of(group, name):
+    # The runs of one network in a group, keyed by run name.
+    return {n: r for n, r in load_group(group).items() if n.startswith(name + "_")}
+
+
+def tuning_runs(name):
+    # Every seed-42 run of the recipe search (grid + random) of one network, keyed by run name.
+    return {**runs_of("tune_grid", name), **runs_of("tune_random", name)}
+
+
+def best_grid_point(name):
+    grid = runs_of("tune_grid", name)
+    if len(grid) < len(TUNE_LRS) * len(TUNE_WDS):
+        return None
+    best = max(grid.values(), key=lambda r: r["best_val_acc"])
+    return best["config"]["lr"], best["config"]["weight_decay"]
+
+
+def top_configs(name):
+    # The TOP_K best runs of the search of one network (seed 42).
+    runs = tuning_runs(name)
+    return sorted(runs.values(), key=lambda r: -r["best_val_acc"])[:TOP_K]
+
+
+def confirmed(name):
+    # {run name: [seed 42, 43, 44]} for the TOP_K configurations of one network.
+    seeds = load_group("tune_seeds")
+    return {
+        r["name"]: [r]
+        + [
+            seeds[f"{r['name']}_s{s}"]
+            for s in SEEDS[1:]
+            if f"{r['name']}_s{s}" in seeds
+        ]
+        for r in top_configs(name)
+    }
+
+
+def best_tuned(name):
+    # (configuration name, [runs over the seeds]) of the best configuration of the recipe search of one network.
+    conf = {n: runs for n, runs in confirmed(name).items() if len(runs) == len(SEEDS)}
+    if not conf:
+        return None
+    best = max(conf, key=lambda n: seed_mean(conf[n]))
+    return best, conf[best]
+
+
+
 # %% [markdown]
 # ### Step 1 — learning rate and weight decay
 #
 # Best validation accuracy of every point of the grid (seed 42), one panel per network; the ring marks the best point.
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="T09YgdBOQLJZ" outputId="efdbbda5-052c-4e15-f47e-bebccd57ded2"
-# [run]
-names = finalists(TUNE_N)
-if names is None:
-    print("train the whole grid with all its seeds first")
-else:
-    print("networks:", ", ".join(label(n) for n in names))
-    # 1. grid search: learning rate x weight decay, the other parameters as in RECIPE
-    for name in names:
-        for lr in TUNE_LRS:
-            for wd in TUNE_WDS:
-                run_experiment(f"{name}_lr{lr:g}_wd{wd:g}", "tune_grid", note="tuning: lr x wd",
-                               **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd})
-        lr, wd = best_grid_point(name)
-        print(f"==> {label(name)}: best learning rate {lr:g}, weight decay {wd:g}\n")
-report_runs()
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 353} id="neNY--9cQLJa" outputId="be6ede74-60b1-438b-eb75-41c46a95663d"
 FIRST_GRID_MAX_WD = 2e-3      # the first grid stopped here: the larger weight decays were added afterwards
@@ -1656,17 +1359,6 @@ if names and grid_runs_t:
 #
 # Every configuration on every network (seed 42), sorted by the mean over the networks; in the plot every configuration is a
 # line through its parameter values, ending at its mean accuracy over the three networks (blue: the two best).
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="q1-jhNX7QLJZ" outputId="9dbe68bc-468e-435c-eb65-3a9d8a78fdb7"
-# [run]
-# 2. random search on the other parameters, at the best lr and weight decay of each network
-configs = random_configs()
-for name in finalists(TUNE_N):
-    lr, wd = best_grid_point(name)
-    for i, c in enumerate(configs):
-        run_experiment(f"{name}_cfg{i:02d}", "tune_random", note="tuning: random search",
-                       **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd, **c})
-report_runs()
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 754} id="0UkjEj6DQLJa" outputId="ce26e558-8779-42b3-9db8-beb361b5f4dd"
 random_runs = load_group("tune_random")
@@ -1733,16 +1425,6 @@ if names and random_runs:
 #
 # The two best configurations of each network, mean ± standard deviation over three seeds.
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="0rA8vdCCQLJZ" outputId="f238778b-15ba-41ab-b1f1-b40f42a1ed97"
-# [run]
-# 3. confirmation: the TOP_K best configurations of each network, with the other seeds
-for name in finalists(TUNE_N):
-    for run in top_configs(name):
-        for seed in SEEDS[1:]:
-            run_experiment(f"{run['name']}_s{seed}", "tune_seeds", note="tuning: seeds",
-                           **{**run_overrides(run), "seed": seed})
-report_runs()
-
 # %% colab={"base_uri": "https://localhost:8080/", "height": 755} id="wwg-HozpQLJb" outputId="d9904fa7-5afe-40a9-d874-f876706e0cd2"
 if names:
     groups, best_per_net = {}, {}
@@ -1759,6 +1441,7 @@ if names:
         print("configuration:", run_overrides(best_per_net[selected][1][0]))
         plot_curves({f"{label(n)} ({label(best_per_net[n][0].removeprefix(n + '_'))})": best_per_net[n][1][0]
                      for n in ranked}, "best tuned configuration of each network (seed 42)")
+
 
 # %% [markdown]
 # All three networks select that same configuration, which brings them to 63–64% validation accuracy, 7–12 points above their
@@ -1784,19 +1467,56 @@ if names:
 # the final decay. Since the recipe was tuned for 70 epochs, a longer training also gives more time to overfit: we check
 # that the gap between training and validation accuracy does not grow. The final model is selected with the same rule.
 
+# %%
+# The longer trainings and the final model.
+
+def long_runs(name):
+    # The longer trainings of one network, over the seeds.
+    group = load_group("long")
+    return [
+        group[f"{name}_ep{LONG_EPOCHS}_s{s}"]
+        for s in SEEDS
+        if f"{name}_ep{LONG_EPOCHS}_s{s}" in group
+    ]
+
+
+def long_final():
+    # {network: [runs over the seeds]} at LONG_EPOCHS, for the tuned networks; None until all are trained.
+    names = finalists(TUNE_N) or []
+    runs = {n: long_runs(n) for n in names}
+    return runs if names and all(len(r) == len(SEEDS) for r in runs.values()) else None
+
+
+def final_network():
+    # The final model: the selection rule applied after the longer training (None until it is trained).
+    runs = long_final()
+    return select(runs, verbose=False)[1] if runs else None
+
+
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="eJj0cSoOQLJZ" outputId="28f103dc-8786-4326-e9ec-7d6b69800de6"
 # [run]
-for name in finalists(TUNE_N):
-    best = best_tuned(name)
-    if best is None:
-        print(f"{label(name)}: train the recipe search with all its seeds first")
-        continue
-    cfg_name, runs = best
-    print(f"{label(name)}: {label(cfg_name.removeprefix(name + '_'))}, {LONG_EPOCHS} epochs")
+# The final model, stated explicitly: res_3461 with the best configuration of its recipe search (cfg05), trained
+# for LONG_EPOCHS epochs. Its ablations each change exactly one component of this configuration.
+FINAL_NET = "res_3461"
+FINAL_CONFIG = {
+    **dict(GRID)[FINAL_NET],
+    **RECIPE,
+    "lr": 0.05,
+    "weight_decay": 5e-3,
+    "label_smoothing": 0.2,
+    "dropout": 0.0,
+    "random_erasing": 0.25,
+    "crop_scale": (0.5, 1.0),
+    "schedule": "onecycle",
+    "epochs": LONG_EPOCHS,
+}
+if TRAIN:
     for seed in SEEDS:
-        run_experiment(f"{name}_ep{LONG_EPOCHS}_s{seed}", "long", note=f"{cfg_name}, {LONG_EPOCHS} epochs",
-                       **{**run_overrides(runs[0]), "epochs": LONG_EPOCHS, "seed": seed})
-report_runs()
+        run_experiment(f"{FINAL_NET}_ep{LONG_EPOCHS}_s{seed}", "long", note=f"cfg05, {LONG_EPOCHS} epochs",
+                       **{**FINAL_CONFIG, "seed": seed})
+    report_runs()
+
 
 # %% [markdown]
 # ### Results
@@ -1876,8 +1596,7 @@ if runs:
 # raises the train-validation gap, removing capacity or an optimization aid lowers the train accuracy itself.
 
 # %%
-# The final model (selected above) and its ablations: each one changes exactly one component of its configuration
-FINAL_NET = final_network()
+# The ablations of the final model: each one changes exactly one component of its configuration
 ABLATION_GROUP = "ablation"
 ABLATION_LR_CONTROL = (
     0.01  # lr of the control runs for the components that make training unstable
@@ -1910,21 +1629,24 @@ def make_ablations(base):
     }
 
 
-if FINAL_NET is None or not long_runs(FINAL_NET):
-    ABLATION_BASE, ABLATIONS = None, {}
-    print("the final model is not available yet: train the longer runs first")
-else:
-    ABLATION_BASE = run_overrides(long_runs(FINAL_NET)[0])
-    ABLATIONS = make_ablations(ABLATION_BASE)
-    print(
-        f"final model: {FINAL_NET}, {ABLATION_BASE['epochs']} epochs, lr {ABLATION_BASE['lr']:g}"
-    )
-    for name, (kind, over) in ABLATIONS.items():
-        print(f"{name:22s} {kind:13s} {over}")
+ABLATION_BASE = {**BASE, **FINAL_CONFIG}
+ABLATIONS = make_ablations(ABLATION_BASE)
+
+# check: the selection rule, applied to the stored longer runs, picks the same network and configuration
+selected = final_network()
+if selected is None:
+    print("the longer runs are not stored: FINAL_CONFIG is not checked against the selection rule")
+elif selected != FINAL_NET or run_overrides(long_runs(selected)[0]) != json.loads(
+    json.dumps({k: v for k, v in ABLATION_BASE.items() if k != "seed"})
+):
+    print(f"WARNING: the selection rule picks {selected}, not FINAL_CONFIG")
+print(f"final model: {FINAL_NET}, {ABLATION_BASE['epochs']} epochs, lr {ABLATION_BASE['lr']:g}")
+for name, (kind, over) in ABLATIONS.items():
+    print(f"{name:22s} {kind:13s} {over}")
+
 
 # %%
 # [run]
-<<<<<<< HEAD
 if TRAIN:
     for name, (kind, over) in ABLATIONS.items():
         for seed in SEEDS:
@@ -1934,17 +1656,7 @@ if TRAIN:
                 note=f"ablation: {name}",
                 **{**ABLATION_BASE, **over, "seed": seed},
             )
-=======
-for name, (kind, over) in ABLATIONS.items():
-    for seed in SEEDS:
-        run_experiment(
-            f"{name}_s{seed}",
-            ABLATION_GROUP,
-            note=f"ablation: {name}",
-            **{**ABLATION_BASE, **over, "seed": seed},
-        )
-report_runs()
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
+    report_runs()
 
 # %% [markdown]
 # ### Results of the ablation
@@ -2307,10 +2019,6 @@ if best is not None:
         else f"WARNING: differs from Part 1 (part 1, here): {differences}"
     )
 
-<<<<<<< HEAD
-
-=======
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
 # %% [markdown]
 # ### Fine-tuning
 #
@@ -2319,7 +2027,6 @@ if best is not None:
 
 # %%
 # [run]
-<<<<<<< HEAD
 if TRAIN:
     for seed in SEEDS:
         run_experiment(
@@ -2330,18 +2037,7 @@ if TRAIN:
             seed=seed,
             **FINETUNE,
         )
-=======
-for seed in SEEDS:
-    run_experiment(
-        f"resnet18_ft_s{seed}",
-        "finetune",
-        note="hyperparameters of part 1",
-        results_dir=RESULTS_DIR_2A,
-        seed=seed,
-        **FINETUNE,
-    )
-report_runs()
->>>>>>> 796b7907ec208fde3893711b49f3382a4aff903e
+    report_runs()
 
 # %% [markdown]
 # ### Results of 2A
@@ -2370,6 +2066,18 @@ if groups:
     )
 else:
     print("no stored run yet")
+
+# %% [markdown]
+# One row per seed of the fine-tuning: epoch of the best validation accuracy, training accuracy at the last epoch and
+# train-validation gap.
+
+# %%
+if finetune:
+    display(summary(finetune))
+    plot_curves(
+        finetune,
+        "2A: pretrained ResNet-18 with the hyperparameters of part 1 (3 seeds)",
+    )
 
 # %% [markdown]
 # ## 2B: tuned fine-tuning
