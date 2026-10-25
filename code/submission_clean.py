@@ -108,6 +108,8 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms as T
 from torchvision.transforms import functional as TF
 import matplotlib.pyplot as plt
+from IPython.display import display
+from typing import cast
 from tqdm.auto import tqdm
 
 IN_COLAB = "google.colab" in sys.modules
@@ -134,8 +136,9 @@ else:
     DATA_ROOT = REPO_DIR / "data"  # dataset: git-ignored, created if missing
 RESULTS_DIR = RESULTS_ROOT / "part1"
 RESULTS_DIR_2A = RESULTS_ROOT / "part2A"
+RESULTS_DIR_2B = RESULTS_ROOT / "part2B"
 
-for d in (RESULTS_DIR, RESULTS_DIR_2A, DATA_ROOT):
+for d in (RESULTS_DIR, RESULTS_DIR_2A, RESULTS_DIR_2B, DATA_ROOT):
     d.mkdir(parents=True, exist_ok=True)
 print("results ->", RESULTS_ROOT)
 
@@ -147,8 +150,8 @@ def fetch_results(file_id, dest_root):
     import gdown, tarfile, tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
-        archive = gdown.download(id=file_id, output=f"{tmp}/results.tar.gz", quiet=True, use_cookies=False)
-        if archive is None:
+        archive = f"{tmp}/results.tar.gz"
+        if gdown.download(id=file_id, output=archive, quiet=True, use_cookies=False) is None:
             raise RuntimeError("download failed")
         with tarfile.open(archive) as tar:
             tar.extractall(dest_root, filter="data")
@@ -340,8 +343,8 @@ class AircraftSplit(Dataset):
     def __len__(self):
         return len(self.y)
 
-    def __getitem__(self, i):
-        img, label = self.base[i]
+    def __getitem__(self, index):
+        img, label = self.base[index]
         return self.transform(preprocess(img, self.img_size)), label
 
     def with_transform(self, transform):
@@ -1053,7 +1056,7 @@ grid_runs = {n: r for n, r in grid_runs.items() if r}
 if grid_runs:
     display(seed_summary(grid_runs))
 
-    convs = {n: 3 + 2 * sum(dict(GRID)[n]["blocks"]) for n in grid_runs}
+    convs = {n: 3 + 2 * sum(cast("tuple[int, ...]", dict(GRID)[n]["blocks"])) for n in grid_runs}
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
     for kind, kind_label, c in (("plain", "plain", COLORS[1]), ("res", "residual", COLORS[0])):
         names = [n for n in grid_runs if n.startswith(kind + "_")]
@@ -1123,7 +1126,7 @@ def finalists(n=TUNE_N):
 def simplicity(name):
     # Sort key: fewer blocks first, then plain before residual.
     over = dict(GRID)[name]
-    return (sum(over["blocks"]), over["residual"])
+    return (sum(cast("tuple[int, ...]", over["blocks"])), over["residual"])
 
 
 def select(runs_by_net, prefix="", verbose=True):
@@ -1723,7 +1726,7 @@ else:
             .style.format({"share_of_class": "{:.0%}"}))
 
     fig, ax = plt.subplots(figsize=(8, 3.8))
-    ax.hist(per_class, bins=np.linspace(0, 1, 21), color=COLORS[0], edgecolor="white")
+    ax.hist(per_class, bins=np.linspace(0, 1, 21).tolist(), color=COLORS[0], edgecolor="white")
     ax.axvline(per_class.mean(), color=COLORS[1], ls="--", lw=1.5, label=f"mean {per_class.mean():.1%}")
     ax.set_xlabel("test accuracy of the class (mean over seeds)"); ax.set_ylabel("number of classes")
     ax.set_title(f"{label(final)}: per-class test accuracy"); ax.legend()
@@ -1794,7 +1797,7 @@ FINETUNE = dict(
 )
 
 # sanity check: same recipe as the stored best configuration of res_3461 in Part 1, when it is available
-best = best_tuned(FINAL_NET) if FINAL_NET else None
+best = best_tuned(FINAL_NET)
 if best is not None:
     stored = run_overrides(best[1][0])
     differences = {
@@ -1839,7 +1842,7 @@ if TRAIN:
 finetune = load_group("finetune", RESULTS_DIR_2A)
 groups = {
     "resnet18_ft (pretrained, 2A)": list(finetune.values()),
-    f"{FINAL_NET} (from scratch, part 1)": long_runs(FINAL_NET) if FINAL_NET else [],
+    f"{FINAL_NET} (from scratch, part 1)": long_runs(FINAL_NET),
 }
 groups = {k: v for k, v in groups.items() if v}
 if groups:
@@ -1871,6 +1874,308 @@ else:
 #
 
 # %% [markdown]
-# ## 2B: tuned fine-tuning
+# ## 2B: adapting the recipe to fine-tuning
 #
-# *To be added.*
+# 2A shows that the recipe of Part 1 is not suited to a pretrained network. In 2B we adapt it, and we follow the method of
+# Part 1: a **ladder** in which every step changes **one aspect of the recipe at a time**, on top of the best
+# configuration of the previous step, so that every change in accuracy has a single cause. All the choices are made on the
+# validation split; test accuracy is only reported.
+#
+# | step | what we tune | question |
+# |---|---|---|
+# | **1. learning rate x weight decay** | peak learning rate 0.01 to 0.001, weight decay 5e-3 to 1e-4 | how much do we recover once the updates no longer erase the ImageNet initialization? |
+# | **2. head warmup and schedule** | the feature extractor is frozen for the first 0, 3, 5 or 10 epochs; one-cycle or cosine schedule | does aligning the random classifier before unfreezing the backbone reduce the early distortion of the features? |
+# | **3. progressive learning rates** | learning rate of stage $s$ equal to $\text{lr} \cdot \gamma^{5-s}$ with $\gamma \in \{1, 0.7, 0.5, 0.3\}$; lowest stages frozen for the whole training (0, 1 or 2 of them) | should the generic early layers learn more slowly than the late, task-specific ones? |
+# | **4. data augmentation** | 4A: minimum crop area 50%, 35%, 25% x random erasing 0, 0.25, 0.5; 4B: colour jitter, Mixup, CutMix | does stronger augmentation limit the memorization of the training set now that the features are preserved? |
+# | **5. classifier regularization** | label smoothing 0 to 0.2 x dropout 0 to 0.4; the two best recipes confirmed with three seeds | how much regularization of the classifier does a tuned network need? |
+#
+# **Protocol.** The exploration runs use one seed (42) and **70 epochs**, the budget of the exploration of Part 1. The two
+# best recipes of the last step are retrained with seeds 43 and 44, and the one with the best mean validation accuracy is
+# the result of 2B. The runs of 2A, trained for 150 epochs, are the reference.
+#
+# **Code.** The runs of 2B use options that the training code above does not have: frozen backbone with BatchNorm layers
+# in evaluation mode, one learning rate per stage, colour jitter, Mixup and CutMix. They were trained with the notebook
+# `part2B`, which uses the same data, splits, loop and result files as this one; here we load the stored runs
+# (`results/part2B`) and analyze them.
+
+# %%
+def best_in_group(group):
+    # The run with the highest validation accuracy of one group of 2B (None if there is none).
+    runs = load_group(group, RESULTS_DIR_2B)
+    return max(runs.values(), key=lambda r: r["best_val_acc"]) if runs else None
+
+
+def grid_table(runs, row_key, col_key, metric="best_val_acc"):
+    # The metric of the runs of a grid, with one hyperparameter on the rows and one on the columns.
+    records = [{row_key: r["config"][row_key], col_key: r["config"][col_key], metric: r[metric]} for r in runs.values()]
+    table = pd.DataFrame(records).pivot(index=row_key, columns=col_key, values=metric)
+    return table.style.background_gradient(cmap="Blues", axis=None).format("{:.3f}")
+
+
+def config_table(runs, keys):
+    # One row per run: the hyperparameters that differ between the runs of a group, and its accuracy.
+    rows = [{**{k: r["config"].get(k) for k in keys}, "best validation": r["best_val_acc"], "test": r["test_acc"],
+             "final training": r["final_train_acc"], "best epoch": r["best_epoch"]} for r in runs.values()]
+    return pd.DataFrame(rows, index=list(runs)).style.format(
+        {"best validation": "{:.3f}", "test": "{:.3f}", "final training": "{:.3f}"}, na_rep="-")
+
+
+def best_per_value(runs, key):
+    # For each value of one hyperparameter, the run with the best validation accuracy: {label: run}.
+    values = sorted({r["config"][key] for r in runs.values()})
+    return {f"{key} {v:g}": max((r for r in runs.values() if r["config"][key] == v), key=lambda r: r["best_val_acc"])
+            for v in values}
+
+
+def confirmed_s5():
+    # {run name: [seed 42, 43, 44]} for the TOP_K best recipes of step 5.
+    reg, extra = load_group("s5_reg", RESULTS_DIR_2B), load_group("s5_seeds", RESULTS_DIR_2B)
+    top = sorted(reg.values(), key=lambda r: -r["best_val_acc"])[:TOP_K]
+    return {r["name"]: [r] + [extra[f"{r['name']}_s{s}"] for s in SEEDS[1:] if f"{r['name']}_s{s}" in extra]
+            for r in top}
+
+
+def best_2b():
+    # (name, runs over the seeds) of the recipe of step 5 with the best mean validation accuracy, None if unconfirmed.
+    done = {n: runs for n, runs in confirmed_s5().items() if len(runs) == len(SEEDS)}
+    if not done:
+        return None
+    best = max(done, key=lambda n: seed_mean(done[n]))
+    return best, done[best]
+
+# %% [markdown]
+# ### Step 1: learning rate and weight decay
+#
+# Pretrained weights already lie in a good region of the loss surface: updates that are too large leave it, and the first
+# epochs of 2A show it (Yosinski et al., NeurIPS 2014). Weight decay is a second suspect: $L_2$ decay pulls the weights
+# towards zero, not towards the pretrained values (Li et al., ICML 2018), so the large value of Part 1 (5e-3) could erase
+# the ImageNet features. We search a 4 x 4 log-spaced grid of smaller learning rates and weight decays, with all the
+# other hyperparameters as in 2A, for 70 epochs. The plot shows, for each learning rate, its best weight decay.
+
+# %%
+s1_runs = load_group("s1_lr_wd", RESULTS_DIR_2B)
+if s1_runs:
+    display(grid_table(s1_runs, "lr", "weight_decay"))
+    plot_curves(
+        {f"lr {r['config']['lr']:g}, wd {r['config']['weight_decay']:g}": r for r in best_per_value(s1_runs, "lr").values()},
+        "step 1: the best weight decay of each learning rate (seed 42)",
+    )
+
+# %% [markdown]
+# **The learning rate is what matters, and 2A's was too large.** Accuracy grows with the learning rate over the whole
+# range: from 61% at 0.001, where the network does not even fit its training set (87% training accuracy), to **71.7% at
+# 0.01** (test 72.2%). Weight decay has a smaller effect, and not the expected one: the *largest* value, 5e-3, is the best
+# at every learning rate (at 0.01, 71.7% against 69.2% for 1e-4), so the pretrained features are not erased by the decay;
+# what erased them in 2A was the learning rate of 0.05. With 70 epochs this run already matches 2A trained for 150
+# (71.9%). The best learning rate is the largest of the grid: the optimum may lie between 0.01 and 0.05, which we do not
+# explore. We keep **learning rate 0.01 and weight decay 5e-3**.
+
+# %% [markdown]
+# ### Step 2: frozen warmup of the classifier and schedule
+#
+# At the first epoch the 100-way classifier is random, while the backbone holds good features: updating everything at
+# once sends large random gradients into the backbone and distorts its features (Kumar et al., *Fine-Tuning can Distort
+# Pretrained Features*, ICLR 2022). Their remedy, **linear probing then fine-tuning**, first trains the classifier with the
+# backbone frozen, then unfreezes everything. We freeze the backbone for the first 0, 3, 5 or 10 epochs (its BatchNorm
+# layers stay in evaluation mode, so that their ImageNet statistics are not altered), and compare the one-cycle schedule
+# with a cosine schedule with 3 warmup epochs.
+
+# %%
+s2_runs = load_group("s2_warmup", RESULTS_DIR_2B)
+if s2_runs:
+    display(grid_table(s2_runs, "schedule", "freeze_epochs"))
+    plot_curves({n: r for n, r in s2_runs.items() if r["config"]["schedule"] == "onecycle"},
+                "step 2: epochs with the backbone frozen, one-cycle schedule (seed 42)")
+
+# %% [markdown]
+# **Freezing the backbone and the schedule change little.** All the combinations are within about two points, and apart from the
+# worst (cosine schedule with 10 frozen epochs, 70.2%) within one point (71.6–72.3%), a difference comparable to the
+# run-to-run noise of 2A (about 0.7 points). The best run freezes the backbone for 10 epochs with the one-cycle schedule
+# (72.3% validation, 72.2% test), 0.6 points above no freezing: we keep it, but the evidence for a warmup of the
+# classifier is weak.
+
+# %% [markdown]
+# ### Step 3: progressive learning rates and frozen stages
+#
+# The first layers of a convolutional network detect edges and textures that transfer across domains, the last ones
+# detect parts of the object (Yosinski et al., NeurIPS 2014). **Discriminative fine-tuning** gives smaller learning rates
+# to the earlier stages (Howard & Ruder, ACL 2018): the stage $s$ of the six of the network (stem, the four residual
+# stages, classifier) learns at $\text{lr} \cdot \gamma^{5-s}$. We cross $\gamma \in \{1, 0.7, 0.5, 0.3\}$ with the number
+# of lowest stages kept frozen during the whole training (0 = none, 1 = the stem, 2 = the stem and the first stage).
+
+# %%
+s3_runs = load_group("s3_proglr", RESULTS_DIR_2B)
+if s3_runs:
+    display(grid_table(s3_runs, "layer_decay", "freeze_stages"))
+    plot_curves(
+        {f"layer decay {r['config']['layer_decay']:g}, {r['config']['freeze_stages']} frozen": r
+         for r in best_per_value(s3_runs, "layer_decay").values()},
+        "step 3: the best number of frozen stages for each layer decay (seed 42)",
+    )
+
+# %% [markdown]
+# **All the layers should learn at the same rate.** Accuracy falls steadily as the decay grows: 72.3% with no decay,
+# then 68.9%, 66.3% and 62.6% for $\gamma$ = 0.7, 0.5 and 0.3, and so does the training accuracy (99.6% down to 97.3%).
+# Freezing the lowest stages does not help either (71.9% with the stem frozen, 71.4% with the first stage too). Lowering
+# the learning rate of the early layers has the same effect as lowering the learning rate of the whole network in step 1:
+# the network underfits. Aircraft photographs are different enough from ImageNet that the early filters need to adapt as
+# well. We keep a single learning rate and no frozen stage: this step does not change the recipe.
+
+# %% [markdown]
+# ### Step 4: data augmentation
+#
+# With about 33 images per class, a network that keeps its pretrained features fits the training set quickly. In Part 1,
+# stronger augmentation was left out because it makes optimization harder from random weights; with pretrained weights it
+# could act as a regularizer. **4A** crosses the minimum area of the random crop (50%, 35%, 25% of the image, forcing the
+# network to recognize parts at several scales) with the probability of random erasing (0, 0.25, 0.5; Zhong et al., AAAI
+# 2020). **4B**, on top of the best 4A, tests brightness and contrast jitter (0.2), **Mixup** ($\alpha$ = 0.2; Zhang et al.,
+# ICLR 2018) and **CutMix** ($\alpha$ = 0.5 and 1; Yun et al., ICCV 2019).
+
+# %%
+s4a_runs = load_group("s4_aug_spatial", RESULTS_DIR_2B)
+s4b_runs = load_group("s4_aug_mix", RESULTS_DIR_2B)
+if s4a_runs:
+    records = [{"minimum crop area": r["config"]["crop_scale"][0], "random erasing": r["config"]["random_erasing"],
+                "best validation": r["best_val_acc"]} for r in s4a_runs.values()]
+    display(pd.DataFrame(records).pivot(index="minimum crop area", columns="random erasing", values="best validation")
+            .style.background_gradient(cmap="Blues", axis=None).format("{:.3f}"))
+if s4b_runs:
+    display(config_table(s4b_runs, ["color_jitter", "mixup_alpha", "cutmix_alpha"]))
+    plot_curves(s4b_runs, "step 4B: colour jitter, Mixup and CutMix (seed 42)")
+
+# %% [markdown]
+# **Stronger augmentation does not help, except for colour jitter.** In 4A the mildest setting is the best: crops of at
+# least 50% of the image and no random erasing (72.7%), even though this run reaches 100% training accuracy; smaller crops
+# and more erasing lower the accuracy (down to 69.8%). In 4B, CutMix makes the training task too hard for 70 epochs (the
+# training accuracy stays at 82–86%) and lowers the accuracy (71.9% and 71.1%), Mixup is neutral (73.3%), and **colour
+# jitter gives the best result, 74.0%**, 1.3 points above the same recipe without it (test 72.9%, against 73.1%). This is
+# a single run and the gain is small, so it is the weakest decision of the ladder; we keep the jitter, and a crop of at
+# least 50% without random erasing.
+
+# %% [markdown]
+# ### Step 5: regularization of the classifier, confirmation with seeds
+#
+# Finally we tune the two regularizers of the classifier, **label smoothing** (0, 0.05, 0.1, 0.2; Szegedy et al., CVPR
+# 2016) and **dropout** before the linear layer (0, 0.2, 0.4; Srivastava et al., JMLR 2014), whose best values may differ
+# now that the backbone and the augmentation have changed. To avoid selecting the luckiest single run, the **two best
+# recipes are retrained with two more seeds**, and the one with the best mean validation accuracy is the result of 2B.
+
+# %%
+s5_runs = load_group("s5_reg", RESULTS_DIR_2B)
+if s5_runs:
+    display(grid_table(s5_runs, "label_smoothing", "dropout"))
+confirmed = confirmed_s5()
+if confirmed:
+    display(seed_summary(confirmed))
+
+# %% [markdown]
+# **The recipe of 2B reaches 74.8% validation and 74.1% test accuracy.** The twelve combinations are within 1.8 points
+# (72.8–74.6%) and no regularizer dominates: the two best ones have opposite choices (label smoothing 0.2 with dropout
+# 0.4, label smoothing 0.1 without dropout). With three seeds, label smoothing 0.2 with dropout 0.4 is better:
+# **74.8% ± 0.2 validation and 74.1% ± 0.3 test**, against 73.7% ± 0.6 and 73.3% ± 0.3 for the other, and its validation accuracy also varies less
+# between seeds. The assignment's target of about 70% was already reached at step 1.
+
+# %% [markdown]
+# ### The ladder of 2B
+#
+# The best run (seed 42) of every step, against the baseline of 2A (150 epochs).
+
+# %%
+ladder_2b = {}
+baseline = list(load_group("finetune", RESULTS_DIR_2A).values())
+if baseline:
+    ladder_2b["2A baseline (150 epochs)"] = baseline[0]
+for name, group in [("1. learning rate x weight decay", "s1_lr_wd"), ("2. head warmup and schedule", "s2_warmup"),
+                    ("3. progressive learning rates", "s3_proglr"), ("4. augmentation", "s4_aug_mix"),
+                    ("5. classifier regularization", "s5_reg")]:
+    best = best_in_group(group)
+    if best is not None:
+        ladder_2b[name] = best
+
+if ladder_2b:
+    names = list(ladder_2b)
+    xs = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(11, 4.4))
+    ax.plot(xs, [ladder_2b[n]["best_val_acc"] for n in names], "o-", color=COLORS[0], markersize=8, label="validation (best epoch)")
+    ax.plot(xs, [ladder_2b[n]["test_acc"] for n in names], "s--", color=COLORS[1], markersize=7, label="test")
+    for x_, n in zip(xs, names):
+        ax.annotate(f"{ladder_2b[n]['best_val_acc']:.3f}", (x_, ladder_2b[n]["best_val_acc"]), textcoords="offset points",
+                    xytext=(0, 9), ha="center", fontsize=8)
+    ax.set_xticks(xs, [n.replace(". ", ".\n", 1) for n in names], fontsize=8)
+    ax.axhline(0.70, ls="--", c="gray", lw=1, label="target of about 70%")
+    ax.set_ylabel("accuracy"); ax.legend(loc="lower right", fontsize=8)
+    ax.set_title("fine-tuning ladder: the best run of every step (seed 42)")
+    plt.tight_layout(); plt.show()
+    display(config_table(ladder_2b, ["lr", "weight_decay", "schedule", "freeze_epochs", "layer_decay", "freeze_stages",
+                                     "crop_scale", "random_erasing", "color_jitter", "label_smoothing", "dropout"]))
+
+# %% [markdown]
+# Steps 1, 4 and 5 are the ones that raise the accuracy: the smaller learning rate lifts the network to the level of 2A
+# in less than half of the epochs, and the following steps add about 3 points in total, mostly from step 4 (colour jitter).
+# Steps 2 and 3 do not change the result (the winner of step 3 is the one of step 2). Note that the baseline of 2A is
+# trained for 150 epochs and the other runs for 70, and that there is no run of 2A with 70 epochs.
+
+# %% [markdown]
+# ### Comparison with Part 1 and 2A
+#
+# Mean ± standard deviation over the three seeds: our final network of Part 1 trained from scratch (150 epochs), the
+# pretrained network with the recipe of Part 1 (2A, 150 epochs), and the tuned recipe of 2B (70 epochs). If the runs that
+# train the winner of 2B for 150 epochs (`final_long`) are stored, they are shown too.
+
+# %%
+final_groups = {}
+final_groups[f"{FINAL_NET}, from scratch (part 1, 150 epochs)"] = long_runs(FINAL_NET)
+final_groups["resnet18, recipe of part 1 (2A, 150 epochs)"] = baseline
+if best_2b() is not None:
+    final_groups["resnet18, tuned recipe (2B, 70 epochs)"] = best_2b()[1]
+final_long = load_group("final_long", RESULTS_DIR_2B)
+long_2b = [final_long[f"resnet18_2B_ep{LONG_EPOCHS}_s{s}"] for s in SEEDS if f"resnet18_2B_ep{LONG_EPOCHS}_s{s}" in final_long]
+if long_2b:
+    final_groups[f"resnet18, tuned recipe (2B, {LONG_EPOCHS} epochs)"] = long_2b
+final_groups = {k: v for k, v in final_groups.items() if v}
+
+if final_groups:
+    display(seed_summary(final_groups))
+    plot_curves({k: v[0] for k, v in final_groups.items()}, "from scratch vs. fine-tuning with two recipes (seed 42)")
+
+# %% [markdown]
+# **Tuning the recipe adds 1.7 points of test accuracy (2.9 on validation), and pretraining pays off at a short budget.**
+# The tuned recipe fine-tunes the pretrained network to 74.1% test accuracy in 70 epochs, 1.7 points above 2A and 9.4 points above what the network of
+# Part 1 reaches with the same 70 epochs (64.7%). With 150 epochs the network trained from scratch catches up (74.2%): the
+# pretrained features are an advantage mostly when the training budget is small.
+
+# %% [markdown]
+# ### Step 6: longer training and higher resolution
+#
+# Two bottlenecks remain for the 150-epoch training of the winner of step 5. **(1)** Without random erasing the training
+# accuracy reaches 100% at about epoch 50, and the remaining 100 epochs have almost no gradient: erasing again (p = 0.25)
+# should prevent the early memorization. **(2)** At 224x224 the last feature map of the ResNet-18 is only 7x7: since the
+# network ends with global average pooling, the same pretrained weights accept 320x320 images and give a 10x10 map, more
+# than twice the spatial resolution for the fine details of an aircraft (Lin et al., ICCV 2015; Touvron et al., NeurIPS
+# 2019). We test the two factors on top of the winner of step 5 trained for 150 epochs, alone and combined (seed 42), and
+# confirm the best configuration with three seeds.
+#
+# The cells below show the stored runs of this step (groups `final_long`, `s6_highres` and `s6_final_seeds` of
+# `results/part2B`).
+
+# %%
+s6_runs = load_group("s6_highres", RESULTS_DIR_2B)
+base_150 = final_long.get(f"resnet18_2B_ep{LONG_EPOCHS}_s{SEEDS[0]}")
+if base_150 is None or len(s6_runs) < 3:
+    print("the runs of step 6 are not stored yet (groups final_long and s6_highres of results/part2B)")
+else:
+    s6_compare = {
+        "224 px, no erasing (baseline)": base_150,
+        "224 px, erasing 0.25": s6_runs["s6a_224px_re0.25_ep150"],
+        "320 px, no erasing": s6_runs["s6b_320px_re0_ep150"],
+        "320 px, erasing 0.25": s6_runs["s6c_320px_re0.25_ep150"],
+    }
+    display(config_table(s6_compare, ["img_size", "random_erasing", "epochs"]))
+    plot_curves(s6_compare, "step 6: resolution and random erasing at 150 epochs (seed 42)")
+
+    final_seeds = load_group("s6_final_seeds", RESULTS_DIR_2B)
+    s6_final = [final_seeds[f"resnet18_2B_best_s{s}"] for s in SEEDS if f"resnet18_2B_best_s{s}" in final_seeds]
+    if s6_final:
+        cfg = s6_final[0]["config"]
+        final_groups[f"resnet18, step 6 ({cfg['img_size']} px, erasing {cfg['random_erasing']:g}, 150 epochs)"] = s6_final
+        display(seed_summary(final_groups))
