@@ -1751,36 +1751,32 @@ else:
 # %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
 #
-# We now fine-tune the ResNet-18 of PyTorch (`torchvision.models.resnet18`), pretrained on ImageNet-1K (V1), on the same
-# data, split and evaluation protocol of Part 1. Everything defined above is reused as is: data pipeline and
-# augmentation, training loop (`fit`), experiment runner (`run_experiment`), storage of the results and plots. The
-# **only two differences** with respect to Part 1 are handled by the configuration key `pretrained=True`:
+# We now fine-tune the ResNet-18 of PyTorch, pretrained on ImageNet-1K (V1 weights), with the same data, splits,
+# training loop and evaluation as Part 1. Only two things change:
 #
-# 1. the network: `build_model` returns the pretrained ResNet-18 with a new 100-way classifier
-#    (`Dropout -> Linear(512, 100)`, initialized at random) instead of `AircraftNet`;
-# 2. the input normalization: the pretrained weights expect the mean and standard deviation of ImageNet
-#    (`get_data(..., imagenet_stats=True)`), not those of our training split.
-#
-# Results are stored in `results/part2A`.
+# 1. **the network**: the pretrained ResNet-18, whose 1000-way ImageNet classifier is replaced by a new, randomly
+#    initialized 100-way linear layer;
+# 2. **the input normalization**: the pretrained filters expect images normalized with the ImageNet mean and standard
+#    deviation, not with those of our training split.
 #
 # ## 2A: the hyperparameters of Part 1
 #
-# As the assignment requires, we fine-tune the whole ResNet-18 with the **training hyperparameters of the best model of
-# Part 1** (`res_3461`, with its tuned recipe, trained for the final 150 epochs), and nothing else is tuned:
+# As the assignment requires, we first fine-tune the whole network with exactly the training recipe of our final
+# model of Part 1, without tuning anything:
 #
 # | hyperparameter | value |
 # |---|---|
-# | resolution, batch size | 224 x 224, 64 |
-# | epochs | 150 (`LONG_EPOCHS`) |
-# | optimizer | SGD, momentum 0.9 |
-# | learning rate, schedule | 0.05, one-cycle (rise over the first 30% of the epochs, then cosine decay) |
-# | weight decay | 5e-3 (convolution and linear weights only) |
-# | label smoothing, dropout | 0.2, 0 |
-# | augmentation | random resized crop (50-100% of the area) + horizontal flip, random erasing (p = 0.25) |
-# | seeds | 42, 43, 44 |
+# | epochs | 150 |
+# | optimizer | SGD, momentum 0.9, batch size 64 |
+# | learning rate | 0.05, one-cycle schedule |
+# | weight decay | 5e-3 |
+# | label smoothing | 0.2 |
+# | dropout | 0 |
+# | augmentation | random resized crop (at least 50% of the image), horizontal flip, random erasing (p = 0.25) |
 #
-# All layers are fine-tuned with this single learning rate. The learning rate of 0.05 was tuned for a network trained
-# from scratch; this experiment shows how it behaves on pretrained weights, which is the starting point of 2B.
+# This recipe, and in particular its learning rate, was tuned for a network trained from scratch. 2A shows how it
+# behaves on pretrained weights, and is the starting point of 2B. As in Part 1, we train three seeds (42, 43, 44).
+#
 
 # %%
 # the training hyperparameters of the best model of Part 1 (res_3461, configuration cfg05), applied to the pretrained net
@@ -1848,30 +1844,31 @@ groups = {
 groups = {k: v for k, v in groups.items() if v}
 if groups:
     display(seed_summary(groups))
-    for group_name, runs in groups.items():
-        print(
-            f"{group_name:32s} val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
-            f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
-            f"train {seed_mean(runs, 'final_train_acc'):.3f}"
-        )
     plot_curves(
         {group_name: runs[0] for group_name, runs in groups.items()},
         "pretrained ResNet-18 vs. from scratch (seed 42)",
     )
+
+    # the accuracy of the pretrained network against its learning rate (seed 42)
+    h = groups["resnet18_ft (pretrained, 2A)"][0]["history"]
+    ep = range(1, len(h["lr"]) + 1)
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(ep, h["val_acc"], color=COLORS[0], label="validation accuracy")
+    ax.plot(ep, h["train_acc"], color=COLORS[0], ls="--", lw=1.3, label="training accuracy")
+    ax.set_xlabel("epoch"); ax.set_ylabel("accuracy")
+    ax_lr = ax.twinx()
+    ax_lr.plot(ep, h["lr"], color="gray", lw=1.5, label="learning rate")
+    ax_lr.set_ylabel("learning rate"); ax_lr.grid(False)
+    ax.legend(*[a + b for a, b in zip(ax.get_legend_handles_labels(), ax_lr.get_legend_handles_labels())],
+              loc="lower right", fontsize=8)
+    ax.set_title("2A: accuracy of the pretrained ResNet-18 and learning rate (seed 42)")
+    plt.tight_layout(); plt.show()
 else:
     print("no stored run yet")
 
 # %% [markdown]
-# One row per seed of the fine-tuning: epoch of the best validation accuracy, training accuracy at the last epoch and
-# train-validation gap.
-
-# %%
-if finetune:
-    display(summary(finetune))
-    plot_curves(
-        finetune,
-        "2A: pretrained ResNet-18 with the hyperparameters of part 1 (3 seeds)",
-    )
+# **Part 1's recipe does not suit a pretrained network.** The pretrained ResNet-18 starts much faster than the network trained from scratch, but its accuracy collapses as the one-cycle schedule raises the learning rate towards 0.05, long before the peak. Even its *training* accuracy falls: the large updates overwrite the ImageNet features that made the start fast. The network recovers only once the learning rate decays, and ends below the network trained from scratch, so with these hyperparameters the pretraining is largely wasted. 2B adapts the recipe to fine-tuning, starting from a much lower learning rate.
+#
 
 # %% [markdown]
 # ## 2B: tuned fine-tuning
