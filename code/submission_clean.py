@@ -601,12 +601,11 @@ pd.DataFrame(rows).set_index("run").style.format(
 # %% [markdown]
 # ## Training
 #
-# - **Loss:** cross-entropy (lecture 3, *Softmax function*, *Cross-entropy loss*), with label smoothing where the recipe enables
-#   it. The validation loss is always the plain cross-entropy, so that all curves share the same scale.
+# - **Loss:** cross-entropy, with label smoothing where the recipe enables it.
 # - **Weight decay**, when enabled, applies to convolution and linear weights only, not to BatchNorm parameters and
 #   biases.
-# - **Model selection** (lecture 6, *Early stopping*): every run keeps the epoch with the highest validation accuracy, and the
-#   test split is evaluated once, on that checkpoint.
+# - **Model selection**: every run keeps the epoch with the highest validation accuracy, and the
+#   test split is evaluated once
 
 # %%
 def make_optimizer(model, cfg):
@@ -713,7 +712,7 @@ def fit(cfg, data, verbose=True):
 # %% [markdown]
 # ### Sanity checks
 #
-# Before trusting any experiment we perform a sanity check on the training pipeline, following step 2 of the training recipe of lecture 6 (A "recipe" for training NNs: "check init loss, overfit a small dataset"; <a href="https://karpathy.github.io/2019/04/25/recipe/" target="_blank">Karpathy, 2019</a>). At initialization the loss must be close to ln(100) ≈ 4.61, the loss of a uniform guess over 100 classes; and the network must be able to memorize 100 training images
+# Before trusting any experiment we perform a sanity check on the training pipeline, following step 2 of the training recipe of lecture 6 (<a href="https://karpathy.github.io/2019/04/25/recipe/" target="_blank">Karpathy, 2019</a>). At initialization the loss must be close to ln(100) ≈ 4.61, the loss of a uniform guess over 100 classes; and the network must be able to memorize 100 training images
 
 # %%
 if data is None:
@@ -954,12 +953,9 @@ def plot_curves(runs, title=""):
 #
 # Each step adds one change to the previous one and is trained at three learning rates (one seed). What we expect:
 #
-# - **A plain VGG** with three stages and a flatten classifier has 6.2M parameters for 3,334 training images — 5M of
-#   them in the classifier, which receives 50,176 features per image, more than the number of training images. Without
-#   augmentation or regularization it should **memorize** the training set: training accuracy close to 100%, validation
-#   accuracy far below. Standard convolutional networks can even fit randomly shuffled labels (Zhang et al., ICLR 2017).
+# - **A plain VGG** with three stages and a flatten classifier.
 # - **+ BatchNorm** should make optimization better behaved and more tolerant to the learning rate.
-# - **+ global average pooling** removes the 5M-weight classifier, where memorization concentrates.
+# - **+ global average pooling** removes the 5M-weight classifier.
 # - **+ crop and flip** show a different version of every image at every epoch, so the training set can no longer be
 #   memorized exactly.
 # - **+ a fourth stage** adds capacity and receptive field once the network is regularized.
@@ -1019,9 +1015,7 @@ if ladder:
 
 # %% [markdown]
 # The plain VGG, without BatchNorm, diverges at learning rate 0.1 and reaches only 4% at 0.05; with BatchNorm every
-# learning rate trains, and the best one gives 11.7 more points — the tolerance to the learning rate promised by lecture 4
-# (*Batch norm: pros and cons*). After global average pooling the best learning rate moves from 0.01 to 0.05–0.1, and
-# 0.01 becomes clearly worse. A single learning rate for every step would have penalized some of them: this is why
+# learning rate trains, and the best one gives 11.7 more points. After global average pooling the best learning rate moves from 0.01 to 0.05–0.1, and 0.01 becomes clearly worse. A single learning rate for every step would have penalized some of them: this is why
 # every configuration is compared at its own best.
 #
 # With augmentation and a fourth stage the network is regularized and still improving: the next question is whether it
@@ -1030,21 +1024,18 @@ if ladder:
 # %% [markdown]
 # ## 2. Depth and residual connections
 #
-# We replicate at small scale the central experiment of the ResNet paper (lecture 5, *Residual Networks*; He et al., 2016):
+# We replicate at small scale the central experiment of the ResNet paper:
 # **identical plain and residual networks at increasing depth**. All six networks are the last network of the roadmap
 # with a different number of blocks per stage, with and without skip connections:
 #
 # ![depth grid](attachment:depth_grid.png)
 #
 #
-# - **one block per stage**: 11 convolutional layers, 4.8M parameters — the last network of the roadmap itself;
-# - **two blocks per stage**: 19 layers, 11.1M — the stage layout of ResNet-18 (lecture 5, *Common variants on ImageNet*),
-#   where He et al. find plain and residual networks on par;
-# - **3, 4, 6 and 1 blocks**: 31 layers, 11.8M — the layout of ResNet-34 with one block in the last stage, where He et
-#   al. find the plain network *worse* than its shallower version. A 512-channel block alone costs 4.7M parameters, so
-#   the extra depth goes into the first three stages.
+# - **one block per stage**: 11 convolutional layers, the last network of the roadmap itself;
+# - **two blocks per stage**: 19 layers, the stage layout of ResNet-18
+# - **3, 4, 6 and 1 blocks**: 31 layers,the layout of ResNet-34 with one block in the last stage
 #
-# Within a depth, the two networks differ only by the skip connections. lecture 5 notes that deeper plain networks show
+# Within a depth, the two networks differ only by the skip connections. Lecture 5 notes that deeper plain networks show
 # **higher training error**, so the problem is optimization, not overfitting: this is the signature to look for in the
 # training accuracy. Each network is trained at three learning rates, then with two more seeds at its best one, since
 # run-to-run variation (1–2 points) is comparable to the differences between networks.
@@ -1055,82 +1046,6 @@ if ladder:
 # The six networks with their validation accuracy (mean ± standard deviation over three seeds) and training accuracy;
 # then the same numbers against depth — left validation, right training accuracy — and the training curves of the
 # seed-42 runs.
-
-# %%
-from matplotlib.patches import Arc, FancyArrowPatch, FancyBboxPatch, Patch, Rectangle
-
-STAGE_COLORS = ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab"]       # stages 1-4: 64, 128, 256, 512 channels
-SKIP_COLOR = COLORS[1]
-DEPTH_COLUMNS = [("1111", "11 layers", "1, 1, 1, 1 blocks", ""),
-                 ("2222", "19 layers", "2, 2, 2, 2 blocks", "ResNet-18 layout"),
-                 ("3461", "31 layers", "3, 4, 6, 1 blocks", "ResNet-34 layout, last stage cut to 1 block")]
-
-
-def draw_depth_grid(values=None, title=""):
-    # The six networks of the experiment: plain / residual x three depths. Each block is a small box coloured by
-    # stage; residual networks have an arc (the skip connection) over every block. values: {network: [text lines]}
-    grid = dict(GRID)
-    fig, ax = plt.subplots(figsize=(13, 4.8))
-    col_x, cell_w, row_y = [0.0, 4.3, 8.6], 3.7, {"plain": 2.0, "res": 0.0}
-    bw, bh, gap = 0.2, 0.42, 0.14
-    for (key, depth, blocks, ref), x0 in zip(DEPTH_COLUMNS, col_x):
-        ax.text(x0 + cell_w / 2, 4.45, depth, ha="center", fontsize=12, fontweight="bold", color="#3d3d3a")
-        ax.text(x0 + cell_w / 2, 4.12, blocks + (f"\n{ref}" if ref else ""), ha="center", va="top", fontsize=9,
-                color="#6b6a64")
-        for kind, y0 in row_y.items():
-            name = f"{kind}_{key}"
-            n_blocks = grid[name]["blocks"]
-            length = sum(n_blocks) * bw + (len(n_blocks) - 1) * gap
-            x = x0 + (cell_w - length) / 2
-            for stage, n in enumerate(n_blocks):
-                for b in range(n):
-                    ax.add_patch(Rectangle((x, y0 + 0.9), bw * 0.85, bh, color=STAGE_COLORS[stage]))
-                    if kind == "res":
-                        ax.add_patch(Arc((x + bw * 0.42, y0 + 0.9 + bh), bw * 0.95, 0.5, theta1=0, theta2=180,
-                                         color=SKIP_COLOR, lw=1.4))
-                    x += bw
-                x += gap
-            lines = values.get(name, []) if values is not None else \
-                [f"{count_params(AircraftNet({**BASE, **grid[name]}, N_CLASSES)) / 1e6:.1f}M parameters"]
-            for k, line in enumerate(lines):
-                ax.text(x0 + cell_w / 2, y0 + 0.55 - 0.42 * k, line, ha="center", va="center",
-                        fontsize=11 if k == 0 and values is not None else 9,
-                        fontweight="bold" if k == 0 and values is not None else "normal",
-                        color="#3d3d3a" if k == 0 else "#6b6a64")
-    for kind, y0 in row_y.items():
-        ax.text(-0.35, y0 + 1.1, "plain" if kind == "plain" else "residual", ha="right", va="center", fontsize=12,
-                fontweight="bold", color=SKIP_COLOR if kind == "res" else "#3d3d3a")
-    # the plain 11-layer network is the last network of the roadmap: framed in the colour of that step
-    bottom = row_y["plain"] + (-0.08 if values is not None else 0.32)
-    ax.add_patch(FancyBboxPatch((0.45, bottom), cell_w - 0.9, row_y["plain"] + 1.52 - bottom,
-                                boxstyle="round,pad=0,rounding_size=0.15", facecolor="none",
-                                edgecolor=COLORS[6], lw=1.4, ls="--"))
-    ax.text(cell_w / 2, row_y["plain"] + 1.6, "= last network of the roadmap", ha="center", va="bottom",
-            fontsize=9, color=COLORS[6])
-    # how to read the grid
-    ax.add_patch(FancyArrowPatch((0.3, -0.35), (12.0, -0.35), arrowstyle="-|>", mutation_scale=14, color="#9b9990"))
-    ax.text(6.15, -0.55, "deeper: the effect of depth", ha="center", va="top", fontsize=9.5, color="#6b6a64")
-    ax.add_patch(FancyArrowPatch((12.55, 3.3), (12.55, 1.1), arrowstyle="<|-|>", mutation_scale=14, color="#9b9990"))
-    ax.text(12.75, 2.2, "same depth:\nonly the skip\nconnections\ndiffer", ha="left", va="center", fontsize=9.5,
-            color="#6b6a64")
-    handles = [Patch(color=c, label=f"stage {i + 1} ({ch} channels)")
-               for i, (c, ch) in enumerate(zip(STAGE_COLORS, (64, 128, 256, 512)))]
-    handles.append(Patch(facecolor="none", edgecolor=SKIP_COLOR, label="skip connection"))
-    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.02), ncol=5, fontsize=8.5, frameon=False)
-    ax.set_xlim(-1.6, 14.2); ax.set_ylim(-0.95, 4.75); ax.axis("off")
-    if title:
-        ax.set_title(title, fontsize=12, loc="left")
-    plt.tight_layout(); plt.show()
-
-
-
-grid_runs = {n: seed_runs(n, "depth_residual") for n, _ in GRID}
-grid_runs = {n: r for n, r in grid_runs.items() if r}
-if len(grid_runs) == len(GRID):
-    draw_depth_grid({n: [f"{100 * seed_mean(r):.1f} ± {100 * seed_std(r):.1f}",
-                         f"training accuracy {100 * seed_mean(r, 'final_train_acc'):.1f}"]
-                     for n, r in grid_runs.items()},
-                    title="Validation accuracy (mean ± standard deviation over three seeds)")
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="RaFm2k7bQLJa" outputId="4a7e304e-7665-41ad-ad70-eea0de276bbc"
 grid_runs = {n: seed_runs(n, "depth_residual") for n, _ in GRID}
@@ -1157,19 +1072,14 @@ if grid_runs:
 
 
 # %% [markdown]
-# **Starting point.** The plain 11-layer network is the last network of the roadmap (framed in the figure), trained
-# again with the same configuration: its seed-42 runs reproduce the numbers of the roadmap exactly, since training is
-# deterministic for a fixed seed. Its two extra seeds only add the standard deviation.
-#
-# **Degradation.** From 19 to 31 layers the plain network loses 8.3 points (55.9% → 47.6%), and its *training* accuracy
-# drops too (97.5% → 91.9%): the deeper plain network is harder to optimize — the degradation problem described in lecture 5.
-# The residual network improves at every depth (46.9% → 52.2% → 54.6%) and keeps fitting its training set: skip
+# **Degradation.** From 19 to 31 layers the plain network degrades its validation accuracy, and its *training* accuracy
+# drops too: the deeper plain network is harder to optimize as we saw in lecture 5.
+# The residual network improves at every depth and keeps fitting its training set: skip
 # connections make depth usable.
 #
-# **Shallow networks.** At 11 and 19 layers the residual networks are about 4 points *worse* than the plain ones, well
-# beyond the seed noise, while reaching a higher training accuracy (99% against 97–98%). Without any regularization,
-# the ease of fitting that skip connections provide turns into more overfitting on 33 images per class. If this is the
-# cause, regularization should help the residual networks more than the plain ones — the question of the next section.
+# **Shallow networks.** At 11 and 19 layers the residual networks are about 4 points worse than the plain ones, well beyond the seed noise. This is not an optimization problem: they fit their training set slightly better, so they lose accuracy on unseen images, not on the training set. At these depths a plain network is still easy to optimize, so skip connections bring no benefit. We expect regularization to help the residual networks more than the plain ones.
+#
+#
 
 # %% [markdown]
 # ## 3. The training recipe
@@ -1177,40 +1087,27 @@ if grid_runs:
 # We regularize the three best networks of the previous experiment and tune their training recipe, combining standard
 # techniques from lecture 6 (*Regularization*):
 #
-# - **Weight decay** (lecture 6, *l2 regularization or weight decay*) penalizes large weights.
-# - **Label smoothing** (lecture 6, *Label smoothing*; Szegedy et al., 2016) replaces the one-hot target with 1−ε on the true
-#   class and ε spread over the others, so the network is not pushed towards infinite confidence.
-# - **Dropout** before the classifier (lecture 6, *Dropout*), between global pooling and the last linear layer. lecture 6 notes it is
-#   not used in ResNets, for its unclear interaction with BatchNorm (*Dropout: where*): zero is a real candidate.
-# - **Random erasing** (lecture 6, *Cutout (Random Erasing)*; Zhong et al., 2020) hides a random rectangle of the image.
-# - **Minimum crop area** of the random resized crop: smaller crops show parts of the aircraft at a larger scale
-#   (lecture 6, *multi-scale training*).
-# - **One-cycle schedule** (lecture 6, *Learning rate schedule: One cycle*; Smith & Topin, 2019): the learning rate rises over
-#   the first 30% of training, then decays to almost zero.
+# - **Weight decay** penalizes large weights.
+# - **Label smoothing**.
+# - **Dropout** before the classifier, between global pooling and the last linear layer.
+# - **Random erasing** hides a random rectangle of the image.
+# - **Minimum crop area** of the random resized crop: smaller crops show parts of the aircraft at a larger scale.
+# - **One-cycle schedule**: the learning rate rises over the first 30% of training, then decays to almost zero.
 #
 # ![recipe search](attachment:recipe_search.png)
 #
-# We tune the recipe in three steps, following lecture 6 (*Random hyper-parameters search*):
+# We tune the recipe in three steps, following a grid and random search, as seen in lecture 6:
 #
 # 1. **Grid search on learning rate x weight decay**, the two most influential parameters, log-spaced, with the other
-#    parameters fixed (label smoothing 0.1, dropout 0.2, random erasing 0.25, minimum crop 50%, cosine schedule).
-# 2. **Random search** on the other five parameters (Bergstra & Bengio, 2012), at the best learning rate and weight
+#    parameters fixed.
+# 2. **Random search** on the other five parameters, at the best learning rate and weight
 #    decay of each network: a full grid would require 216 runs per network, so we draw 12 configurations once and
 #    train the same 12 on every network.
 # 3. **Confirmation with seeds**: the best of many single runs is partly the luckiest, so the two best configurations of
 #    each network are retrained with two more seeds and compared on the mean.
 #
-# **Networks.** The 19-layer plain network and the 31-layer residual network are the two best; the 19-layer residual
-# network is third but overfits the most, so it is the network regularization can help most. The 31-layer plain network
-# is excluded because it does not fit its training set — an optimization problem regularization cannot fix — and the
-# 11-layer networks trail the best by 5–9 points. All three
-# networks receive the same tuning budget, so that the comparison remains fair.
-#
-# **Selection rule.** The best configuration of each network by mean validation accuracy; then the best network, or
+# **Selection rule.** The best configuration of each network by mean validation accuracy, then the best network, or
 # the simpler one if the best two are within one standard deviation.
-#
-# Mixup, CutMix and the exponential moving average of the weights (lecture 6) are left out: they mainly pay off with schedules
-# much longer than ours.
 
 # %%
 # The selection rule, and the networks of the grid that enter the recipe search.
@@ -1323,15 +1220,11 @@ def best_tuned(name):
 # Best validation accuracy of every point of the grid (seed 42), one panel per network; the ring marks the best point.
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 353} id="neNY--9cQLJa" outputId="be6ede74-60b1-438b-eb75-41c46a95663d"
-FIRST_GRID_MAX_WD = 2e-3      # the first grid stopped here: the larger weight decays were added afterwards
-
 names = finalists(TUNE_N) or []
 grid_runs_t = load_group("tune_grid")
 if names and grid_runs_t:
     fig, axes = plt.subplots(1, len(names), figsize=(15, 4.2), sharey=True)
     for ax, name in zip(axes, names):
-        ax.axvspan(np.sqrt(FIRST_GRID_MAX_WD * 5e-3), 1.6e-2, color="#f3f2ee", zorder=0)
-        ax.text(np.sqrt(5e-3 * 1e-2), 18.5, "added after\nthe first grid", ha="center", fontsize=8.5, color="#6b6a64")
         points = []
         for lr, c in zip(TUNE_LRS, ("#9b9990", COLORS[0])):
             acc = [100 * grid_runs_t.get(f"{name}_lr{lr:g}_wd{wd:g}", {}).get("best_val_acc", np.nan) for wd in TUNE_WDS]
@@ -1348,17 +1241,14 @@ if names and grid_runs_t:
 
 
 # %% [markdown]
-# Accuracy increases with weight decay up to **2e-3 for the plain network and 5e-3 for both residual networks**, then drops
-# sharply at 1e-2. The grid initially stopped at 2e-3, which was the best value for two networks; since an optimum at
-# the edge of a grid may lie beyond it, we extended the grid until accuracy decreased (shaded area), and the optimum now lies inside
-# it. The residual networks, which fit their training set more easily, need the stronger regularization. With strong
-# weight decay, a learning rate of 0.05 is better than 0.1.
+# Accuracy increases with weight decay **for both residual networks**, then drops
+# sharply at 1e-2. The grid initially stopped at 2e-3, which was the best value for two networks. The optimum lies inside the grid for every network, so the range is wide enough. The residual networks, which fit their training set more easily, need the stronger regularization. With strong weight decay, a learning rate of 0.05 is better than 0.1.
 
 # %% [markdown]
 # ### Step 2 — random search
 #
 # Every configuration on every network (seed 42), sorted by the mean over the networks; in the plot every configuration is a
-# line through its parameter values, ending at its mean accuracy over the three networks (blue: the two best).
+# line through its parameter values, ending at its mean accuracy over the three networks (dark blue: the best configuration, light blue: the second best).
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 754} id="0UkjEj6DQLJa" outputId="ce26e558-8779-42b3-9db8-beb361b5f4dd"
 random_runs = load_group("tune_random")
@@ -1414,11 +1304,9 @@ if names and random_runs:
 
 
 # %% [markdown]
-# The ranking is consistent across networks: the same configuration (configuration 5, the dark blue line) — **label smoothing 0.2, no dropout,
-# random erasing 0.25, minimum crop 50%, one-cycle schedule** — is the best or second best for all three. The one-cycle schedule
-# appears in the best configurations, no dropout in the two best — consistent with lecture 6's remark on dropout and
-# BatchNorm — and random erasing at 0.5 in all of the worst ones. Since each run changes several parameters at once,
-# these are tendencies; the ablation study measures each component in isolation.
+# The ranking is consistent across networks: the same configuration (configuration 5, **label smoothing 0.2, no dropout,
+# random erasing 0.25, minimum crop 50%, one-cycle schedule**) is the best or second best for all three. The one-cycle schedule
+# appears in the best configurations, no dropout in the two best. These are tendencies from single-seed runs. The next step confirms the best configurations with more seeds
 
 # %% [markdown]
 # ### Step 3 — confirmation with seeds
@@ -1444,19 +1332,16 @@ if names:
 
 
 # %% [markdown]
-# All three networks select that same configuration, which brings them to 63–64% validation accuracy, 7–12 points above their
+# All three networks select that same configuration, which increases the validation accuracy by 7–12 points above their
 # unregularized versions. Tuning confirms the hypothesis of the depth experiment: without regularization
 # the 19-layer residual network was 3.7 points *worse* than the plain one; with the tuned recipe it is 1.1 points
-# *better*. The ease of fitting given by the skip connections turns into accuracy once overfitting is controlled.
+# *better*. 
 #
-# At 70 epochs the two residual networks are within 0.1 points, so our rule would select the simpler one. However, all
+# At 70 epochs the two residual networks perform very similar, so our rule would select the simpler one. However, all
 # three networks reach their best validation accuracy in the last epochs, with a training accuracy still around 90%:
 # they are still improving when training stops.
 #
-# **Limitation.** The search is staged — architecture first, then recipe; learning rate and weight decay before the
-# other parameters — so it assumes the effects to be roughly independent. The flip in the ranking of the 19-layer plain and
-# residual networks shows that they are not entirely: this is why we tuned three networks rather than one, and why the ablation
-# measures every component on the final model.
+# Selecting now would compare networks that have not finished training, so we first train them longer.
 
 # %% [markdown]
 # ## 4. Longer training and the final model
@@ -1464,8 +1349,7 @@ if names:
 # We train the three tuned networks again for **150 epochs**, each with its best configuration and no other change,
 # with three seeds each. The one-cycle schedule is defined in fractions of the training, so it stretches with the number
 # of epochs: in the middle of a longer run the learning rate is still high, and validation accuracy only rises during
-# the final decay. Since the recipe was tuned for 70 epochs, a longer training also gives more time to overfit: we check
-# that the gap between training and validation accuracy does not grow. The final model is selected with the same rule.
+# the final decay. Since the recipe was tuned for 70 epochs, a longer training also gives more time to overfit: if the gap between training and validation accuracy grew, the regularization tuned at 70 epochs would no longer be adequate and would have to be tuned again. We check that it does not grow.
 
 # %%
 # The longer trainings and the final model.
@@ -1546,30 +1430,22 @@ if runs:
     plot_curves(curves, f"tuned networks: {BASE['epochs']} vs {LONG_EPOCHS} epochs (seed 42)")
 
 # %% [markdown]
-# **Longer training adds 7–10 points** to every network, with no other change: at 70 epochs they were stopped too early.
+# **Longer training improves validation accuracy** to every network, with no other change: at 70 epochs they were stopped too early.
 # **Overfitting does not increase**: the train–validation gap of the 31-layer residual network goes from 26 points at 70 epochs to 24 at
 # 150, so the recipe tuned for 70 epochs still controls overfitting with a longer budget.
 #
-# **The ranking changes.** At 150 epochs the 31-layer residual network is 1.6 points better than the second network, more than twice the
-# run-to-run noise, so by our selection rule it is the final model: the deepest residual network benefits most from the
-# additional training. Training only the winner at 70 epochs longer would have missed it.
+# **The ranking changes.** At 150 epochs the 31-layer residual network is the best network, the deepest residual network benefits most from the additional training. Training only the winner at 70 epochs longer would have missed it.
 #
-# **Final model: the 31-layer residual network** (stem of three 3x3 convolutions; four
-# stages of 3, 4, 6 and 1 basic blocks with 64, 128, 256 and 512 channels; global average pooling; linear classifier;
-# 11.9M parameters), trained for 150 epochs with SGD (momentum 0.9), a one-cycle schedule peaking at a learning rate of 0.05, weight
-# decay 5e-3, label smoothing 0.2, random resized crops of at least 50% of the image, horizontal flips and random
-# erasing (p = 0.25): **74.0% ± 0.7 validation and 74.2% ± 0.2 test accuracy**. It combines every component justified
-# by the previous experiments — BatchNorm, global average pooling, augmentation, a fourth stage, depth and residual
-# connections — with a tuned training recipe.
+# **[Final model] The 31-layer residual network** combines every component justified by the previous experiments: BatchNorm, global average pooling, augmentation, a fourth stage, depth and residual
+# connections, with a tuned training recipe.
 
 # %% [markdown]
 # ## 5. Ablation of the final model
 #
-# The roadmap and the depth experiment *added* components one at a time to a plain network. To prove that every
+# The roadmap and the depth experiment added components one at a time to a plain network. To prove that every
 # design choice of the **final model** contributes to its accuracy, we now do the converse: starting from the final
 # network with its final configuration (150 epochs), we **remove one component at a time**, retrain, and compare with the
-# full model. Every ablation uses the same three seeds and changes exactly one thing; learning rate, epochs and all the
-# other settings stay those of the final model.
+# full model. Every ablation uses the same three seeds and changes exactly one thing.
 #
 # | ablation | what changes | component tested |
 # |---|---|---|
@@ -1662,8 +1538,7 @@ if TRAIN:
 # ### Results of the ablation
 #
 # Mean ± standard deviation over three seeds, each ablated network against the full model (the longer training of the
-# final network, same seeds). Runs that diverged before the first validation have no checkpoint and are left out of the
-# means (`diverged` counts them).
+# final network, same seeds).
 
 
 # %%
@@ -1727,9 +1602,12 @@ def ablation_table():
     return pd.DataFrame(rows).set_index("run")
 
 
+ABLATION_COLUMNS = ["kind", "change", "d_val", "d_test", "gap", "beyond_noise"]  # the columns shown in the table
+
+
 def style_ablation(table):
     return (
-        table.rename(
+        table[ABLATION_COLUMNS].rename(
             columns={
                 "d_val": "Δ val",
                 "d_test": "Δ test",
@@ -1744,18 +1622,7 @@ def style_ablation(table):
             }
         )
         .style.format(
-            {
-                "lr": "{:g}",
-                "params (M)": "{:.2f}",
-                "val": "{:.3f}",
-                "± val": "{:.3f}",
-                "Δ val": "{:+.3f}",
-                "test": "{:.3f}",
-                "± test": "{:.3f}",
-                "Δ test": "{:+.3f}",
-                "train acc": "{:.3f}",
-                "train-val gap": "{:+.3f}",
-            },
+            {"Δ val": "{:+.3f}", "Δ test": "{:+.3f}", "train-val gap": "{:+.3f}"},
             na_rep="-",
         )
         .background_gradient(
@@ -1774,89 +1641,15 @@ else:
     display(style_ablation(ablation))
 
 # %% [markdown]
-# The two plots below show the same table. **Left**: the change in validation (dark bars) and test (light bars) accuracy
-# caused by each removal, with the standard deviation over seeds (the grey band is the seed noise of the full model); components are ordered by how much their removal costs.
-# **Right**: where each network ends up in the training accuracy / validation accuracy plane. A network far below the
-# dashed diagonal overfits. Removing capacity or an optimization aid moves a network to the left (it fits its training
-# set worse); removing a regularizer moves it to the right and down (it fits better and generalizes worse).
-
-# %%
-if ablation is not None:
-    full = ablation.loc["full model"]
-    abl = ablation.drop(index="full model").sort_values(
-        "d_val", ascending=True
-    )  # the most costly removal on top
-    kind_color = {"architecture": COLORS[0], "recipe": COLORS[1], "control": COLORS[2]}
-    ys = np.arange(len(abl))
-
-    fig, (ax, ax2) = plt.subplots(
-        1,
-        2,
-        figsize=(17, 0.55 * len(abl) + 3.2),
-        gridspec_kw=dict(width_ratios=[1.35, 1]),
-    )
-    ax.axvspan(-full.val_std, full.val_std, color="gray", alpha=0.18)
-    ax.barh(
-        ys - 0.2,
-        abl.d_val,
-        0.38,
-        xerr=abl.val_std.fillna(0),
-        color=[kind_color[k] for k in abl.kind],
-        error_kw=dict(lw=1.2, capsize=3),
-    )
-    ax.barh(
-        ys + 0.2,
-        abl.d_test,
-        0.38,
-        xerr=abl.test_std.fillna(0),
-        color=[kind_color[k] for k in abl.kind],
-        alpha=0.45,
-        error_kw=dict(lw=1.2, capsize=3),
-    )
-    right = max(0.02, np.nanmax(abl.d_val) + 0.02)
-    for y, d, t in zip(ys, abl.d_val, abl.d_test):
-        ax.text(
-            right, y, f"val {d:+.3f}\ntest {t:+.3f}", va="center", ha="left", fontsize=8
-        )
-    ax.set_xlim(None, right)
-    ax.set_yticks(ys, abl.index)
-    ax.invert_yaxis()
-    ax.axvline(0, color="black", lw=1)
-    ax.set_xlabel("accuracy change when the component is removed")
-    ax.set_title(
-        f"ablation of {FINAL_NET}: full model val {full.val_mean:.3f}, test {full.test_mean:.3f}"
-    )
-    handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in kind_color.values()]
-    band = plt.Rectangle((0, 0), 1, 1, color="gray", alpha=0.18)
-    ax.legend(
-        handles + [band],
-        list(kind_color) + ["seed noise of the full model"],
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.1),
-        ncol=4,
-        fontsize=8,
-        frameon=False,
-    )
-
-    lim = [np.nanmin(ablation.val_mean) - 0.03, 1.0]
-    ax2.plot([0, 1], [0, 1], "--", color="gray", lw=1)
-    for name, row in ablation.iterrows():
-        c = "black" if name == "full model" else kind_color[row.kind]
-        ax2.scatter(row.train, row.val_mean, color=c, s=70, zorder=3)
-        ax2.annotate(
-            name,
-            (row.train, row.val_mean),
-            textcoords="offset points",
-            xytext=(6, 4),
-            fontsize=8,
-        )
-    ax2.set_xlim(max(np.nanmin(ablation.train) - 0.05, 0), 1.0)
-    ax2.set_ylim(*lim)
-    ax2.set_xlabel("final training accuracy")
-    ax2.set_ylabel("best validation accuracy")
-    ax2.set_title("fit vs generalization (dashed: train = val)")
-    plt.tight_layout()
-    plt.show()
+# **Architecture.** Every component of the network is needed, but not equally.
+#
+# - **BatchNorm is essential** (−73 points): without it the network does not train at all. The loss stays at ln(100) ≈ 4.6, the value of a random guess, and the network ends up predicting almost always the same class. The reason is the depth of our network: in a residual block the output is *added* to the input, so without BatchNorm the activations grow at every one of the 14 blocks. At the end they are very large, the gradients are very large too, and the first updates are huge steps that break the network. A 5× lower learning rate (0.01) shrinks the steps, since every update is learning rate × gradient, but it only reaches 8% validation accuracy: BatchNorm, which keeps the activations at the same scale in every block, is what makes this network trainable.
+# - **Global average pooling** (−23 points): with a flatten classifier the training–validation gap doubles (48 points instead of 24), so the network memorizes much more. A lower learning rate makes it even worse (−34), so the problem is overfitting, not optimization.
+# - **Residual connections** (−17 points): here the gap gets *smaller* (13 points), so the network without skip connections fits its training set worse. It is the degradation problem of section 2: the plain 31-layer network is hard to optimize.
+# - **Depth** (−8 points with one block per stage) matters much more than the **fourth stage** (−1.4 points), which has a single block.
+#
+# Finally, **augmentation** (−18 points) and **weight decay** (−15 points) are the most important: without them the gap almost doubles (44 and 40 points), so the network overfits. **Label smoothing** gives a small but measurable gain (−1.8 points). **Random erasing** and the **one-cycle schedule** (instead of cosine) change the accuracy by less than the seed noise: at 150 epochs, with the other regularizers, they do not make a measurable difference, even though the random search had selected them at 70 epochs.
+#
 
 # %% [markdown]
 # Training curves of every ablation (seed 42) against the full model: validation accuracy (solid) and training accuracy
@@ -1865,7 +1658,8 @@ if ablation is not None:
 # %%
 if ablation is not None:
     runs = load_group(ABLATION_GROUP)
-    names = [n for n in ablation.index if n != "full model"]
+    # the ablations discussed in the text: training collapse without BatchNorm, overfitting without the regularizers
+    names = ["no_batchnorm", "no_batchnorm_lr0.01", "no_augmentation", "no_weight_decay"]
     reference = long_runs(FINAL_NET)[0]
     cols = 4
     rows_ = int(np.ceil(len(names) / cols))
@@ -1934,25 +1728,25 @@ else:
     ax.set_xlabel("test accuracy of the class (mean over seeds)"); ax.set_ylabel("number of classes")
     ax.set_title(f"{label(final)}: per-class test accuracy"); ax.legend()
     plt.tight_layout(); plt.show()
-    worst = np.argsort(per_class)[:5]
-    print("hardest classes:", ", ".join(f"{names_of[i]} ({per_class[i]:.0%})" for i in worst))
 
 # %% [markdown]
-# A fine-grained task is expected to concentrate its errors on visually similar variants rather than spreading them
-# uniformly: the pairs above show which variants the model cannot yet separate, and the per-class accuracy shows how
-# unevenly the 100 classes are learned.
+# The table shows how all ten of the most frequent confusions are between variants of the same family. The histogram shows that most classes reach 70–90%, while a tail of 7 classes below 50%. The model recognizes the aircraft family. Its remaining errors are the fine-grained differences between variants.
 
 # %% [markdown]
 # ## Conclusions
 #
-# - A plain CNN memorizes the 33 images per class of FGVC-Aircraft; BatchNorm, global average pooling and augmentation
-#   turn memorization into generalization (18.5% → 47.7%), and a fourth stage adds capacity (52.6%).
-# - Deeper plain networks degrade, while residual networks keep improving with depth — but without regularization the
-#   ease of fitting of residual networks becomes overfitting.
-# - A tuned training recipe (strong weight decay, label smoothing, random erasing, one-cycle schedule) reverses that
-#   ranking and brings every network to 63–64%; training for 150 epochs adds 7–10 more points.
-# - The final model, a 31-layer residual network, reaches **74.2% ± 0.2 test accuracy**, with every component justified
-#   by a measurement.
+# On a dataset this small, the main obstacle is not designing a powerful network but stopping it from memorizing
+# 33 images per class. Most of our gains came from controlling that: global average pooling, augmentation and weight
+# decay matter as much as the architecture itself.
+#
+# Depth helps only with residual connections and only once overfitting is controlled: the same skip connections
+# that hurt the shallow networks without regularization made the 31-layer network the best one after tuning and
+# longer training. Decisions taken too early would have missed this: the best network was a plain one without regularization, a 19-layer residual one after tuning, and the 31-layer residual one only after longer training.
+#
+# Finally, not every choice of the search turned out to matter: the ablation shows that some components selected
+# at 70 epochs bring no measurable benefit in the final model, while BatchNorm, which we added first, is the one the
+# network cannot do without. The remaining errors are between near-identical variants of the same aircraft, the
+# difficulty that makes this task fine-grained.
 
 # %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
