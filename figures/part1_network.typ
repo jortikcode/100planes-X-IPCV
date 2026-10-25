@@ -38,9 +38,6 @@
   (
     type: "fc", label: "linear", channels: (100,), height: 3, depth: 0.4, offset: 2.2,
   ),
-  (
-    type: "softmax", label: "softmax", height: 3, depth: 0.4, offset: 2.2,
-  ),
 )
 
 #draw-network(layers, show-relu: true, show-legend: true, legend-title: "Layers", scale: 80%)
