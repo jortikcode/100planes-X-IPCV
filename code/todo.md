@@ -6,8 +6,10 @@
 - [x] control runs (for bn) in ablation study
 - [ ] torch view diagram (part 1) [https://github.com/mert-kurttutan/torchview]
 - [x] diagrammini di juan
-- [ ]spiegazione sul perché l'ablation della batch norm è così impattante
-- [ ] mettere la visualizzazione della rete di ale al posto di torchinfo
+- [x] spiegazione sul perché l'ablation della batch norm è così impattante 
+- [x] mettere la visualizzazione della rete di ale al posto di torchinfo
+- [ ] decidere se tenere run experiments
+- [ ] aggiungere la parte 2b di miky
 
 # to remove
 
@@ -15,7 +17,7 @@
 - [x] caching
 - [x] gpu acceleration
 - [x] useless torchinfo prints (training)
-- [ ] mixed precision in CUDA (?)
+- [x] mixed precision in CUDA (?)
 
 # simplify
 
