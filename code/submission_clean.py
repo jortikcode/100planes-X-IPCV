@@ -1876,27 +1876,27 @@ else:
 # %% [markdown]
 # ## 2B: adapting the recipe to fine-tuning
 #
-# 2A shows that the recipe of Part 1 is not suited to a pretrained network. In 2B we adapt it, and we follow the method of
-# Part 1: a **ladder** in which every step changes **one aspect of the recipe at a time**, on top of the best
-# configuration of the previous step, so that every change in accuracy has a single cause. All the choices are made on the
-# validation split; test accuracy is only reported.
+# 2A shows that the recipe of Part 1 is not suited to a pretrained network. In 2B we adapt it **one aspect at a time**:
+# each step tunes a single part of the recipe, starting from the best configuration of the previous step, so that every
+# change in accuracy has a single cause.
 #
-# | step | what we tune | question |
-# |---|---|---|
-# | **1. learning rate x weight decay** | peak learning rate 0.01 to 0.001, weight decay 5e-3 to 1e-4 | how much do we recover once the updates no longer erase the ImageNet initialization? |
-# | **2. head warmup and schedule** | the feature extractor is frozen for the first 0, 3, 5 or 10 epochs; one-cycle or cosine schedule | does aligning the random classifier before unfreezing the backbone reduce the early distortion of the features? |
-# | **3. progressive learning rates** | learning rate of stage $s$ equal to $\text{lr} \cdot \gamma^{5-s}$ with $\gamma \in \{1, 0.7, 0.5, 0.3\}$; lowest stages frozen for the whole training (0, 1 or 2 of them) | should the generic early layers learn more slowly than the late, task-specific ones? |
-# | **4. data augmentation** | 4A: minimum crop area 50%, 35%, 25% x random erasing 0, 0.25, 0.5; 4B: colour jitter, Mixup, CutMix | does stronger augmentation limit the memorization of the training set now that the features are preserved? |
-# | **5. classifier regularization** | label smoothing 0 to 0.2 x dropout 0 to 0.4; the two best recipes confirmed with three seeds | how much regularization of the classifier does a tuned network need? |
+# | step | question |
+# |---|---|
+# | **1. learning rate and weight decay** | how much do we recover once the updates no longer erase the ImageNet features? |
+# | **2. frozen warmup and schedule** | does training the new classifier first, with the backbone frozen, protect the pretrained features? |
+# | **3. progressive learning rates** | should the early, generic layers learn more slowly than the late ones? |
+# | **4. data augmentation** | does stronger augmentation limit memorization now that the features are preserved? |
+# | **5. classifier regularization** | how much label smoothing and dropout does the tuned network need? |
+# | **6. longer training and resolution** | do 150 epochs, random erasing and larger images improve the final recipe? |
 #
-# **Protocol.** The exploration runs use one seed (42) and **70 epochs**, the budget of the exploration of Part 1. The two
-# best recipes of the last step are retrained with seeds 43 and 44, and the one with the best mean validation accuracy is
-# the result of 2B. The runs of 2A, trained for 150 epochs, are the reference.
+# **Protocol.** As in Part 1, the exploration (steps 1–5) uses one seed and 70 epochs, and the two best recipes of
+# step 5 are confirmed with three seeds. Step 6 trains the winner for 150 epochs, the budget of the final models of
+# Part 1 and 2A, and its best configuration is confirmed with three seeds. All the choices are made on the validation
+# split; test accuracy is only reported.
 #
-# **Code.** The runs of 2B use options that the training code above does not have: frozen backbone with BatchNorm layers
-# in evaluation mode, one learning rate per stage, colour jitter, Mixup and CutMix. They were trained with the notebook
-# `part2B`, which uses the same data, splits, loop and result files as this one; here we load the stored runs
-# (`results/part2B`) and analyze them.
+# **Code.** 2B needs training options that the code above does not have (frozen layers, one learning rate per stage,
+# colour jitter, Mixup, CutMix), so its runs were trained with the notebook `part2B` on the same data and splits; here
+# we load and analyze the stored runs.
 
 # %%
 def best_in_group(group):
@@ -2049,7 +2049,7 @@ if s4b_runs:
 # and more erasing lower the accuracy (down to 69.8%). In 4B, CutMix makes the training task too hard for 70 epochs (the
 # training accuracy stays at 82–86%) and lowers the accuracy (71.9% and 71.1%), Mixup is neutral (73.3%), and **colour
 # jitter gives the best result, 74.0%**, 1.3 points above the same recipe without it (test 72.9%, against 73.1%). This is
-# a single run and the gain is small, so it is the weakest decision of the ladder; we keep the jitter, and a crop of at
+# a single run and the gain is small, so it is the weakest decision of 2B; we keep the jitter, and a crop of at
 # least 50% without random erasing.
 
 # %% [markdown]
@@ -2076,7 +2076,7 @@ if confirmed:
 # between seeds. The assignment's target of about 70% was already reached at step 1.
 
 # %% [markdown]
-# ### The ladder of 2B
+# ### Summary of the steps
 #
 # The best run (seed 42) of every step, against the baseline of 2A (150 epochs).
 
@@ -2104,7 +2104,7 @@ if ladder_2b:
     ax.set_xticks(xs, [n.replace(". ", ".\n", 1) for n in names], fontsize=8)
     ax.axhline(0.70, ls="--", c="gray", lw=1, label="target of about 70%")
     ax.set_ylabel("accuracy"); ax.legend(loc="lower right", fontsize=8)
-    ax.set_title("fine-tuning ladder: the best run of every step (seed 42)")
+    ax.set_title("fine-tuning: the best run of every step (seed 42)")
     plt.tight_layout(); plt.show()
     display(config_table(ladder_2b, ["lr", "weight_decay", "schedule", "freeze_epochs", "layer_decay", "freeze_stages",
                                      "crop_scale", "random_erasing", "color_jitter", "label_smoothing", "dropout"]))
