@@ -193,18 +193,12 @@ fix_random(42)
 #
 # A base configuration holds every choice shared by all runs; each experiment changes only what it studies.
 #
-# - **Optimizer: SGD with momentum 0.9** — the optimizer of VGG and ResNet (lecture 3, *SGD with minibatches*; lecture 5).
-# - **Learning-rate sweep.** Each configuration is trained at learning rates 0.1, 0.05 and 0.01 (log-spaced, lecture 6 *Random
-#   hyper-parameters search*) and represented by its best one. The best learning rate depends on the network — without
-#   BatchNorm, or with a large classification head, training becomes unstable at values that a normalized network
-#   handles well — so a single value for every step could make a step look harmful only because the value does not
+# - **Optimizer: SGD with momentum 0.9** — the optimizer of VGG and ResNet
+# - **Learning-rate sweep.** Each configuration is trained at learning rates 0.1, 0.05 and 0.01 and represented by its best one. The best learning rate depends on the network so a single value for every step could make a step look harmful only because the value does not
 #   suit it.
-# - **Schedule: linear warmup for 3 epochs, then cosine decay to zero** (lecture 6, *Learning rate schedule: cosine* and
-#   *warm-up*). A large learning rate makes fast progress but cannot settle into a minimum; decaying it lets the
-#   network settle, and starting low avoids large updates while the weights are still random.
-# - **Budget: 70 epochs, batch 64** — a compromise between convergence and the number of runs the study requires; the
-#   selected networks are trained longer at the end.
-# - **Resolution: 224x224**, the standard resolution of ImageNet training and of the pretrained ResNet-18 of Part 2.
+# - **Schedule: linear warmup for 3 epochs, then cosine decay to zero**
+# - **Budget: 70 epochs, batch 64** 
+# - **Resolution: 224x224**, the standard resolution of ImageNet training.
 # - **Regularizers off** (weight decay, label smoothing, dropout, random erasing) until the training recipe, so that the
 #   roadmap and the depth experiment measure the architecture alone.
 
@@ -434,18 +428,16 @@ if data is not None:
 #
 # ![network](attachment:network.png)
 #
-# - **Stages**. The network is a stem followed by stages of identical blocks; every stage after the first halves the resolution and doubles the channels. A block is two 3x3 convolutions each followed by ReLU
-# - **Stem**. The resolution is reduced by 4 before the first stage, as in ResNet and GoogLeNet, since early layers detect simple patterns that need no full resolution and the blocks are 16 times cheaper at 56x56 than at 224x224. As in ResNet-C, the 7x7 convolution of ResNet is replaced by three 3x3 convolutions (32, 32, 64 channels), each followed by a ReLU, the first one with stride 2.
-# - **BatchNorm**. normalizes the activations of each channel over the batch. *It allows higher learning rates* (in our final network it is even essential: removing it makes training collapse, with a 73-point drop in validation accuracy, and a 5× lower learning rate does not recover it; see the ablation study) and makes initialization less critical. It is placed after every convolution,
-#   before the ReLU, and the convolutions it follows have no bias.
-# - **Global average pooling**. averages
-#   each channel of the last feature map, replacing a flatten layer whose classifier would hold most of the parameters
-#   of the network.
-# - **Residual connections**.
-#   The block computes $f(x) + x$: it only has to learn a correction of the identity, and very deep networks become
-#   trainable. When a block changes resolution or channels, the input goes through a 1x1 convolution with BatchNorm
-#   (projection); otherwise it is added unchanged. Plain networks do not create the projections, so plain and residual
-#   versions of a network have almost the same number of parameters.
+# - **Stem**: three 3x3 convolutions (32, 32, 64 channels, the first with stride 2) and a 3x3 max-pool with stride 2,
+#   which reduce the resolution from 224x224 to 56x56, as in ResNet-C.
+# - **Stages**: up to four stages of identical blocks, with every stage after the first
+#   halving the resolution and doubling the number of channels. A block is two 3x3 convolutions, each followed by a ReLU.
+# - **BatchNorm** (optional): after every convolution, before the ReLU; the convolutions it follows have no bias.
+# - **Residual connections** (optional): the block adds its input to its output before the second ReLU. When the
+#   resolution or the number of channels changes, the input goes through a 1x1 convolution with BatchNorm (projection).
+# - **Classifier**: global average pooling followed by a linear layer, or (optional) a flatten layer followed by a linear
+#   layer.
+#
 
 # %%
 def conv_bn(c_in, c_out, k, stride, bn):
@@ -578,8 +570,7 @@ def count_gflops(model, img_size):
 SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual")
 
 # %% [markdown]
-# Size and cost of every network of the study. With the flatten classifier (the plain VGG and the network with
-# BatchNorm), the classifier alone holds 81% of the parameters.
+# Size and cost of every network of the study.
 
 # %%
 rows = []
@@ -990,14 +981,10 @@ if steps:
     plot_curves(steps, "the roadmap")
 
 # %% [markdown]
-# **Every step improves the network**, from **18.5%** (plain VGG) to **52.6%** (fourth stage) validation accuracy: BatchNorm adds 11.7
-# points, global average pooling 13.3, crop and flip 4.2 and the fourth stage 4.9.
+# **Every step improves the network**
 #
-# The curves show the mechanism. The first three networks reach **100% training accuracy**: they memorize the training
-# set. The plain VGG does it within about 15 epochs, after which its validation loss *rises* while its training loss goes to zero —
-# the network becomes confidently wrong on unseen images. BatchNorm and global average pooling make the memorizing
-# network generalize better, but do not stop memorization. Augmentation does: once crop and flip are added, the training accuracy stays
-# below 100% and the gap between training and validation accuracy shrinks.
+# The first three networks reach **100% training accuracy**: they memorize the training
+# set. The plain VGG does it very quickly in the early epochs, after which its validation loss *rises* while its training loss goes to zero. BatchNorm and global average pooling make the memorizing network generalize better, but do not stop the memorization of the training dataset. Augmentation does: once crop and flip are added, the training accuracy stays below 100% and the gap between training and validation accuracy shrinks.
 
 # %% [markdown]
 # ### Sensitivity to the learning rate
@@ -1021,15 +1008,12 @@ if ladder:
 # learning rate trains, and the best one gives 11.7 more points. After global average pooling the best learning rate moves from 0.01 to 0.05–0.1, and 0.01 becomes clearly worse. A single learning rate for every step would have penalized some of them: this is why
 # every configuration is compared at its own best.
 #
-# With augmentation and a fourth stage the network is regularized and still improving: the next question is whether it
-# benefits from more depth.
+# With augmentation and a fourth stage the network is regularized and still improving: the next question is whether it benefits from more depth.
 
 # %% [markdown]
 # ## 2. Depth and residual connections
 #
-# We replicate at small scale the central experiment of the ResNet paper:
-# **identical plain and residual networks at increasing depth**. All six networks are the last network of the roadmap
-# with a different number of blocks per stage, with and without skip connections:
+# We experiment **identical plain and residual networks at increasing depth**. All six networks are the last network of the roadmap with a different number of blocks per stage, with and without skip connections:
 #
 # ![depth grid](attachment:depth_grid.png)
 #
@@ -1087,8 +1071,7 @@ if grid_runs:
 # %% [markdown]
 # ## 3. The training recipe
 #
-# We regularize the three best networks of the previous experiment and tune their training recipe, combining standard
-# techniques from lecture 6 (*Regularization*):
+# We regularize the three best networks of the previous experiment and tune their training recipe:
 #
 # - **Weight decay** penalizes large weights.
 # - **Label smoothing**.
@@ -1245,7 +1228,7 @@ if names and grid_runs_t:
 
 # %% [markdown]
 # Accuracy increases with weight decay **for both residual networks**, then drops
-# sharply at 1e-2. The grid initially stopped at 2e-3, which was the best value for two networks. The optimum lies inside the grid for every network, so the range is wide enough. The residual networks, which fit their training set more easily, need the stronger regularization. With strong weight decay, a learning rate of 0.05 is better than 0.1.
+# sharply at 1e-2. The optimum lies inside the grid for every network, so the range is wide enough. The residual networks, which fit their training set more easily, need the stronger regularization. With strong weight decay, a learning rate of 0.05 is better than 0.1.
 
 # %% [markdown]
 # ### Step 2 — random search
