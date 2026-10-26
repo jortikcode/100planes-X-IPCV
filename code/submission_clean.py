@@ -33,7 +33,7 @@
 # - [Configuration](#configuration)
 # - [Data](#data)
 # - [The network](#the-network)
-# - [Training](#training) — [Sanity checks](#sanity-checks)
+# - [Training](#training)
 # - [Experiment runner](#experiment-runner)
 #
 # **Experiments**
@@ -46,7 +46,6 @@
 #    [confirmation with seeds](#step-3--confirmation-with-seeds)
 # 4. [Longer training and the final model](#4-longer-training-and-the-final-model)
 # 5. [Ablation of the final model](#5-ablation-of-the-final-model)
-# 6. [Error analysis of the final model](#6-error-analysis-of-the-final-model)
 #
 # [Conclusions](#conclusions)
 #
@@ -66,19 +65,16 @@
 # All runs use 224×224 images, batch 64 and SGD with momentum 0.9. The roadmap and the depth experiment train every network for 70 epochs at three learning rates and keep the best, since different networks prefer different learning rates. The training recipe then tunes the learning rate together with the other hyperparameters, and the final model and its ablation are trained for 150 epochs. All choices are made on the validation split while the test accuracy is reported but never used to select anything.
 #
 # **Result.** The final model is a residual network with 31 convolutional layers, trained for 150 epochs with the tuned recipe: **74.0% ± 0.7 validation and 74.2% ± 0.2 test accuracy** (mean ± standard deviation over three seeds).
-#
-#
 
 # %% [markdown]
 # ## Setup (shared by all parts)
 #
 # **How to run.** The notebook runs top to bottom, locally or on Colab. All the runs reported below are stored in a
 # shared Google Drive folder (a copy of the `results` directory), downloaded automatically with `gdown` as a single
-# archive. The dataset is downloaded by torchvision on first use. With `TRAIN = False` (the default) the notebook only loads
-# the stored results and shows its tables and plots, with no training. With `TRAIN = True` the training cells (final
-# model, ablation, Part 2A) train the runs whose result does not exist yet; `RETRAIN = True` trains them again even if
-# it exists. If the dataset cannot be downloaded, the cells that need the images are skipped and the stored results
-# are still loaded and shown. The images are read and preprocessed on the fly, on the CPU. Locally, results are kept in the `results`
+# archive. With `TRAIN = False` (the default) the notebook only loads the stored results and shows its tables and plots:
+# no dataset and no training are needed. With `TRAIN = True` the training cells (final model, ablation, Part 2A)
+# download the dataset and train the runs whose result does not exist yet; `RETRAIN = True` trains them again even if
+# it exists. The images are read and preprocessed on the fly, on the CPU. Locally, results are kept in the `results`
 # directory of the repository and the dataset in its `data` directory (git-ignored, created if missing); on Colab both
 # stay on the temporary disk of the session.
 #
@@ -93,6 +89,7 @@
 import json
 import math
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -273,15 +270,6 @@ RECIPE = dict(weight_decay=5e-4, label_smoothing=0.1, dropout=0.2, random_erasin
 TUNE_N = 3
 TUNE_LRS = [0.1, 0.05]  # grid search: learning rate x weight decay (log-spaced)
 TUNE_WDS = [1e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2]
-SEARCH_SPACE = dict(  # random search over the other recipe parameters
-    label_smoothing=[0.0, 0.05, 0.1, 0.2],
-    dropout=[0.0, 0.2, 0.5],
-    random_erasing=[0.0, 0.25, 0.5],
-    crop_scale=[(0.25, 1.0), (0.35, 1.0), (0.5, 1.0)],
-    schedule=["cosine", "onecycle"],
-)
-N_RANDOM = 12  # random configurations, the same list for every network
-SEARCH_SEED = 0  # seed of the random draw of the configurations (not of the trainings)
 TOP_K = 2  # best configurations of each network confirmed with the other seeds
 
 # Longer training: the tuned networks, each with its best configuration, trained for more epochs
@@ -299,12 +287,13 @@ LONG_EPOCHS = 150
 # **Augmentation, on training batches only** (bottom row). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe.
 #
 # **Data loading.** The images are read and preprocessed on the fly by a `DataLoader`; the augmentation uses the
-# torchvision transforms `RandomResizedCrop`, `RandomHorizontalFlip` and `RandomErasing`. The dataset is always loaded
-# through the torchvision class;
+# torchvision transforms `RandomResizedCrop`, `RandomHorizontalFlip` and `RandomErasing`. The dataset is read through
+# the torchvision class, which downloads it the first time a run is trained.
 
 # %%
 from functools import cache
 
+N_CLASSES = 100  # FGVC-Aircraft, annotation_level="variant"
 BANNER_PX = 20
 IMAGENET_MEAN, IMAGENET_STD = (
     (0.485, 0.456, 0.406),
@@ -400,25 +389,6 @@ def batches(split, data, cfg, train):
         yield x.to(DEVICE), y.to(DEVICE)
 
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 627, "referenced_widgets": ["56021d40a2a24aeb8e4ce236e7148752", "6bfaa424ab0c4850a6178b86192df164", "56d0fbce688e46be90203013770b34f0", "8fd45dc7b2f34c8b991c5e0c6372b909", "384e443d54af484388c872cd9c651db6", "a5ecdadd79b54812b504fbdb18a9e77a", "02254a46ef3a4539b3e88e2c76de0b54", "3bdf4bc01bd04181857632f348b260b2", "f83a31387aff4eff9ef9ca5018fb8480", "876bf5b0cca245798b08a3e1766fa7b0", "9523291372d048e4bdad61970d4317c5", "d00deb33dced4c739082b3f66fe2f28a", "54644bff45634c01ba9e198d92dda2a3", "c55a9f91ffa4417ca5953e7980538c54", "235f4ce923b34c8fa7a67eb53c9ce437", "f3aa4a0d36b4401dba9f15d53928dd12", "a7be3d6e83bd43c9ab94d446a3a84092", "3be9ba871a9b47a6966b9a407541e07f", "44a0209d1dd24772bba80aaec434ec2b", "24a8fb733b6149f8bed15a6f62f533a3", "63168f7aedf14b8baf77319c63b9e1e8", "f9ccf2160eb34d3a83c04c8123d81006", "18a3bab19b14462b94c01db5d92d4e5a", "3d89a74f9dd24957a44885ee6b678ab7", "7c651a7c0668478584b8a36e77df11e5", "0e5caa1c119d4c25a340b93b9a273426", "842d760ac3fc4f4b88ea9810b87842b3", "ff48c049053b4ab6a5be12897136ee39", "e9c5b8b8a0af4a5c94c7c9921a9f794f", "9dc002e952fa4947b0cc0d5f3fcaefeb", "4ce45873e5b448128bc1e50bcf8c2736", "5809a734924c49dca6fec8b08bcfea63", "08f8bcd48a7f4c799c71e80e8ca1709e"]} id="Mt7nFLOrQLJX" outputId="b731a5fa-81ae-4e7a-f570-21b36df716db"
-try:
-    data = get_data(BASE["img_size"])
-except Exception as e:
-    data = None
-    print(
-        f"WARNING: the dataset is not available ({e})\n"
-        "The cells that need the images are skipped; the stored results are still loaded and shown."
-    )
-
-N_CLASSES = 100  # FGVC-Aircraft, annotation_level="variant"
-if data is not None:
-    CLASSES = data["train"].classes
-    assert len(CLASSES) == N_CLASSES
-    print(
-        f"classes: {N_CLASSES} | train {len(data['train'])} | val {len(data['val'])} | test {len(data['test'])}"
-    )
-
-
 # %% [markdown]
 # ## The network
 #
@@ -496,9 +466,7 @@ class AircraftNet(nn.Module):
             )
         else:
             with torch.no_grad():  # size of the last feature map, for the flatten head
-                s = self.stages(
-                    self.stem(torch.zeros(1, 3, cfg["img_size"], cfg["img_size"]))
-                ).shape
+                s = self.stages(self.stem(torch.zeros(1, 3, cfg["img_size"], cfg["img_size"]))).shape
             self.head = nn.Sequential(
                 nn.Flatten(),
                 nn.Dropout(cfg["dropout"]),
@@ -521,9 +489,7 @@ def build_model(cfg, n_classes=100):
     if not cfg.get("pretrained", False):
         return AircraftNet(cfg, n_classes)
     model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
-    model.fc = nn.Sequential(
-        nn.Dropout(cfg["dropout"]), nn.Linear(model.fc.in_features, n_classes)
-    )
+    model.fc = nn.Sequential(nn.Dropout(cfg["dropout"]), nn.Linear(model.fc.in_features, n_classes))
     return model
 
 
@@ -538,20 +504,11 @@ def count_gflops(model, img_size):
     def hook(m, inp, out):
         nonlocal macs
         if isinstance(m, nn.Conv2d):
-            macs += (
-                out[0].numel()
-                * (m.in_channels // m.groups)
-                * m.kernel_size[0]
-                * m.kernel_size[1]
-            )
+            macs += out[0].numel() * (m.in_channels // m.groups) * m.kernel_size[0] * m.kernel_size[1]
         elif isinstance(m, nn.Linear):
             macs += m.in_features * m.out_features
 
-    handles = [
-        m.register_forward_hook(hook)
-        for m in model.modules()
-        if isinstance(m, (nn.Conv2d, nn.Linear))
-    ]
+    handles = [m.register_forward_hook(hook) for m in model.modules() if isinstance(m, (nn.Conv2d, nn.Linear))]
     with torch.no_grad():
         model.eval()(torch.zeros(1, 3, img_size, img_size))
     for h in handles:
@@ -565,10 +522,6 @@ def count_gflops(model, img_size):
 #
 # ![final network](attachment:part1_network.png)
 
-# %%
-# the keys that only describe AircraftNet: a pretrained run does not store them
-SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual")
-
 # %% [markdown]
 # Size and cost of every network of the study.
 
@@ -578,18 +531,9 @@ for name, over in LADDER + GRID:
     cfg = {**BASE, **over}
     m = AircraftNet(cfg, N_CLASSES)
     head = sum(p.numel() for p in m.head.parameters())
-    rows.append(
-        dict(
-            run=name,
-            params_M=count_params(m) / 1e6,
-            head_share=head / count_params(m),
-            GFLOPs=count_gflops(m, cfg["img_size"]),
-            convs=sum(isinstance(l, nn.Conv2d) for l in m.modules()),
-        )
-    )
-pd.DataFrame(rows).set_index("run").style.format(
-    {"params_M": "{:.2f}", "head_share": "{:.0%}", "GFLOPs": "{:.2f}"}
-)
+    rows.append(dict(run=name, params_M=count_params(m) / 1e6, head_share=head / count_params(m),
+                     GFLOPs=count_gflops(m, cfg["img_size"]), convs=sum(isinstance(l, nn.Conv2d) for l in m.modules())))
+pd.DataFrame(rows).set_index("run").style.format({"params_M": "{:.2f}", "head_share": "{:.0%}", "GFLOPs": "{:.2f}"})
 
 
 # %% [markdown]
@@ -605,14 +549,8 @@ pd.DataFrame(rows).set_index("run").style.format(
 def make_optimizer(model, cfg):
     decay = [p for p in model.parameters() if p.ndim > 1]
     no_decay = [p for p in model.parameters() if p.ndim <= 1]
-    return torch.optim.SGD(
-        [
-            {"params": decay, "weight_decay": cfg["weight_decay"]},
-            {"params": no_decay, "weight_decay": 0.0},
-        ],
-        lr=cfg["lr"],
-        momentum=cfg["momentum"],
-    )
+    return torch.optim.SGD([{"params": decay, "weight_decay": cfg["weight_decay"]},
+                            {"params": no_decay, "weight_decay": 0.0}], lr=cfg["lr"], momentum=cfg["momentum"])
 
 
 def lr_at(epoch, cfg):
@@ -627,9 +565,7 @@ def lr_at(epoch, cfg):
         return end + (high - end) * (1 + math.cos(math.pi * t)) / 2
     if epoch < cfg["warmup_epochs"]:
         return cfg["lr"] * (epoch + 1) / cfg["warmup_epochs"]
-    progress = (epoch - cfg["warmup_epochs"]) / max(
-        cfg["epochs"] - cfg["warmup_epochs"], 1
-    )
+    progress = (epoch - cfg["warmup_epochs"]) / max(cfg["epochs"] - cfg["warmup_epochs"], 1)
     return cfg["lr"] * 0.5 * (1 + math.cos(math.pi * progress))
 
 
@@ -670,10 +606,7 @@ def fit(cfg, data, verbose=True):
     model = build_model(cfg, N_CLASSES).to(DEVICE)
     opt = make_optimizer(model, cfg)
     criterion = nn.CrossEntropyLoss(label_smoothing=cfg["label_smoothing"])
-    hist = {
-        k: []
-        for k in ("train_loss", "train_acc", "val_loss", "val_acc", "lr", "seconds")
-    }
+    hist = {k: [] for k in ("train_loss", "train_acc", "val_loss", "val_acc", "lr", "seconds")}
     best_acc, best_epoch, best_state, diverged = -1.0, 0, None, False
 
     for epoch in range(cfg["epochs"]):
@@ -693,10 +626,8 @@ def fit(cfg, data, verbose=True):
             best_acc, best_epoch = va_acc, epoch + 1
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         if verbose and (epoch % 5 == 0 or epoch == cfg["epochs"] - 1):
-            print(
-                f"  ep {epoch + 1:3d} | lr {lr:.4f} | train loss {tr_loss:.3f} acc {tr_acc:.3f} "
-                f"| val loss {va_loss:.3f} acc {va_acc:.3f} | {hist['seconds'][-1]:.1f}s"
-            )
+            print(f"  ep {epoch + 1:3d} | lr {lr:.4f} | train loss {tr_loss:.3f} acc {tr_acc:.3f} "
+                  f"| val loss {va_loss:.3f} acc {va_acc:.3f} | {hist['seconds'][-1]:.1f}s")
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -704,42 +635,7 @@ def fit(cfg, data, verbose=True):
 
 
 # %% [markdown]
-# ### Sanity checks
-#
-# Before trusting any experiment we perform a sanity check on the training pipeline, following step 2 of the training recipe of lecture 6 (<a href="https://karpathy.github.io/2019/04/25/recipe/" target="_blank">Karpathy, 2019</a>). At initialization the loss must be close to ln(100) ≈ 4.61, the loss of a uniform guess over 100 classes; and the network must be able to memorize 100 training images
-
-# %%
-if data is None:
-    print("skipped: the dataset is not available")
-else:
-    fix_random(0)
-    cfg = {**BASE, "batchnorm": True}
-    model = AircraftNet(cfg, N_CLASSES).to(DEVICE)
-    x, y = next(batches(data["train"], data, cfg, train=True))
-    with torch.no_grad():
-        print(
-            f"initial loss {F.cross_entropy(model(x), y).item():.3f}  (expected ~{math.log(N_CLASSES):.2f})"
-        )
-
-    # memorize 100 images with Adam, full batch
-    x = torch.stack([data["train"][i][0] for i in range(100)]).to(DEVICE)
-    y = data["train"].y[:100].to(DEVICE)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    model.train()
-    for step in range(150):
-        loss = F.cross_entropy(model(x), y)
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-    model.eval()
-    with torch.no_grad():
-        print(
-            f"tiny subset: train acc {(model(x).argmax(1) == y).float().mean().item():.2f}  (expected ~1.00)"
-        )
-
-
-# %% [markdown]
-# ## Experiment runner
+# ## Experiment runner and stored runs
 #
 # `run_experiment` trains one configuration (in `results/part1`, or in the directory given by `results_dir` for Part 2),
 # evaluates its best checkpoint on the test split and stores the configuration, the per-epoch curves and the test
@@ -747,26 +643,24 @@ else:
 # the roadmap, of the depth and residual comparison and of the recipe search were obtained by calling it for every
 # configuration at the three learning rates of the sweep (seed 42), and then with two more seeds at the best learning
 # rate. The seed-42 result is the best of three learning rates, hence slightly optimistic; the two other seeds are not.
-# The plotting helpers used in the rest of the notebook follow.
+#
+# All the stored runs (Part 1, 2A and 2B) are then read into a single table, one row per run, from which every section
+# selects its runs with `stored(experiment, network, variant, seed)`. The plotting helpers used in the rest of the
+# notebook follow.
 
 # %%
+# the keys that only describe AircraftNet: a pretrained run does not store them
+SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual")
+
+
 def result_path(name, group, seed, results_dir=None):
     return (results_dir or RESULTS_DIR) / group / f"{name}_seed{seed}.json"
 
 
-_LOADED = 0  # stored runs loaded since the last report_runs()
-
-
-def report_runs():
-    # One line instead of one per stored run: how many runs the previous cell loaded instead of training.
-    global _LOADED
-    if _LOADED:
-        print(f"{_LOADED} stored runs loaded (same configuration, not retrained)")
-    _LOADED = 0
-
-
-def run_experiment(name, group, note="", results_dir=None, **overrides):
-    global _LOADED
+def run_experiment(name, group, results_dir=None, **overrides):
+    # Trains one configuration, evaluates its best checkpoint on the test split and stores the run; a stored run with
+    # the same configuration is loaded instead (unless RETRAIN).
+    global _RUNS
     cfg = {**BASE, **overrides, "name": name, "group": group}
     if cfg.get("pretrained", False):  # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
         cfg = {k: v for k, v in cfg.items() if k not in SCRATCH_ONLY_KEYS}
@@ -774,100 +668,103 @@ def run_experiment(name, group, note="", results_dir=None, **overrides):
     if not RETRAIN and out.exists():
         run = json.loads(out.read_text())
         if run["config"] == json.loads(json.dumps(cfg)):  # same configuration (tuples stored as lists)
-            _LOADED += 1
             return run
         print(f"{group}/{name}: the configuration changed since the stored run, training")
 
-    shown = ("lr", "weight_decay", "label_smoothing", "dropout", "random_erasing", "augment", "crop_scale", "seed", "epochs")
-    print(f"### {group}/{name}\n    " + " | ".join(f"{k} {cfg[k]}" for k in shown)
-          + f" | schedule {cfg.get('schedule', 'cosine')}")
+    print(f"### {group}/{name}")
     fix_random(cfg["seed"])
     data = get_data(cfg["img_size"], cfg.get("pretrained", False))
     t0 = time.time()
     model, hist, best_epoch, diverged = fit(cfg, data)
-    minutes = (time.time() - t0) / 60
     if best_epoch:
         test_loss, test_acc, test_pred = evaluate(model, data["test"], data, cfg, return_preds=True)
     else:  # diverged before the first validation: there is no checkpoint to test
         test_loss, test_acc, test_pred = float("nan"), float("nan"), []
-
-    cpu_model = build_model(cfg, N_CLASSES)
     run = dict(
-        name=name, group=group, seed=cfg["seed"], note=note, config=cfg, history=hist,
+        name=name, group=group, seed=cfg["seed"], config=cfg, history=hist,
         best_val_acc=max(hist["val_acc"], default=0.0), best_epoch=best_epoch,
         final_val_acc=hist["val_acc"][-1] if hist["val_acc"] else 0.0,
         final_train_acc=hist["train_acc"][-1] if hist["train_acc"] else 0.0,
-        test_acc=test_acc, test_loss=test_loss, test_pred=test_pred, test_true=data["test"].y.cpu().tolist(),
-        params=count_params(cpu_model), gflops=count_gflops(cpu_model, cfg["img_size"]), minutes=minutes,
-        device=torch.cuda.get_device_name() if DEVICE.type == "cuda" else str(DEVICE), diverged=diverged,
+        test_acc=test_acc, test_loss=test_loss, test_pred=test_pred, test_true=data["test"].y.tolist(),
+        params=count_params(model), minutes=(time.time() - t0) / 60, diverged=diverged,
+        device=torch.cuda.get_device_name() if DEVICE.type == "cuda" else str(DEVICE),
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(run))
-    print(f"{name}: best val {run['best_val_acc']:.3f} (epoch {best_epoch}) | test {test_acc:.3f} | {minutes:.1f} min")
+    _RUNS = None  # the table of the stored runs is read again on its next use
+    print(f"{name}: best val {run['best_val_acc']:.3f} (epoch {best_epoch}) | test {test_acc:.3f}")
     return run
 
 
-def load_group(group, results_dir=None):
-    runs = [
-        json.loads(p.read_text())
-        for p in sorted(((results_dir or RESULTS_DIR) / group).glob("*.json"))
-    ]
-    return {r["name"]: r for r in runs}
+EXPERIMENTS = {  # results directory -> experiment: the extra seeds belong to the experiment of their configuration
+    "depth_residual_seeds": "depth_residual", "tune_grid": "recipe", "tune_random": "recipe", "tune_seeds": "recipe",
+    "s5_seeds": "s5_reg",
+}
+_RUNS = None  # the table of the stored runs, read on first use
+
+
+def load_runs():
+    # Every stored run as one row: experiment, network, variant of the configuration ("lr0.05" in a learning-rate
+    # sweep, "lr0.05_wd0.005" or "cfg05" in the recipe search, "ep150" in the longer training), seed, accuracies and
+    # hyperparameters. Run names are "{network}_{variant}_s{seed}"; the whole stored run is in the column `run`.
+    networks = sorted((n for n, _ in LADDER + GRID), key=len, reverse=True)
+    rows = []
+    for path in sorted(p for d in (RESULTS_DIR, RESULTS_DIR_2A, RESULTS_DIR_2B) for p in d.glob("*/*.json")):
+        r = json.loads(path.read_text())
+        base = re.sub(r"_s\d+$", "", r["name"])  # the seed suffix of the extra seeds
+        network = next((n for n in networks if base == n or base.startswith(n + "_")), base)
+        config = {k: tuple(v) if isinstance(v, list) else v for k, v in r["config"].items()
+                  if k not in ("name", "group", "seed")}
+        rows.append(dict(config, experiment=EXPERIMENTS.get(path.parent.name, path.parent.name), network=network,
+                         variant=base[len(network) + 1:], seed=r["seed"], val=r["best_val_acc"], test=r["test_acc"],
+                         train=r["final_train_acc"], run=r))
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["experiment", "network", "variant", "seed", "run"])
+
+
+def stored(experiment, network=None, variant=None, seed=None):
+    # The stored runs of one experiment, optionally of one network, variant and seed, ordered by seed.
+    global _RUNS
+    if _RUNS is None:
+        _RUNS = load_runs()
+    t = _RUNS[_RUNS.experiment == experiment]
+    for column, value in (("network", network), ("variant", variant), ("seed", seed)):
+        if value is not None:
+            t = t[t[column] == value]
+    return t.sort_values("seed", kind="stable")
+
+
+def best_run(t):
+    # The run with the highest validation accuracy (the first one on ties).
+    return t.iloc[int(np.argmax(t.val.to_numpy()))]
+
+
+def best_lr(experiment, network):
+    # The seed-42 run of a network at the learning rate that won its sweep; None until every learning rate is trained.
+    sweep = stored(experiment, network, seed=SEEDS[0])
+    return best_run(sweep) if len(sweep) == len(LR_SWEEP) else None
+
+
+def at_best_lr(experiment, network):
+    # Every seed of a network at the learning rate that won its sweep (none until the sweep is complete).
+    best = best_lr(experiment, network)
+    return stored(experiment, network, best.variant) if best is not None else stored(experiment, network).iloc[:0]
+
+
+def best_confirmed(confirmed_runs):
+    # (key, runs) of the configuration with the best mean validation accuracy among those trained with every seed.
+    done = {k: t for k, t in confirmed_runs.items() if len(t) == len(SEEDS)}
+    if not done:
+        return None
+    best = max(done, key=lambda k: done[k].val.mean())
+    return best, done[best]
 
 
 def run_overrides(run):
     # The overrides that reproduce a stored run (everything but its name, group and seed).
-    return {
-        k: v for k, v in run["config"].items() if k not in ("name", "group", "seed")
-    }
-
-
-def seed_mean(runs, key="best_val_acc"):
-    return float(np.mean([r[key] for r in runs]))
-
-
-def seed_std(runs, key="best_val_acc"):
-    return (
-        float(np.std([r[key] for r in runs], ddof=1)) if len(runs) > 1 else float("nan")
-    )
-
-
-def sweep_runs(runs, name):
-    # The seed-42 runs of one configuration of the sweep, keyed by learning rate.
-    return {
-        r["config"]["lr"]: r
-        for n, r in runs.items()
-        if n.startswith(f"{name}_lr")
-        and r["config"]["lr"] in LR_SWEEP
-        and r["seed"] == SEEDS[0]
-    }
-
-
-def best_of(runs, name):
-    # The best run (on validation) of one configuration of the sweep; None until every learning rate is trained.
-    swept = sweep_runs(runs, name)
-    if len(swept) < len(LR_SWEEP):
-        return None
-    return max(swept.values(), key=lambda r: r["best_val_acc"])
-
-
-def seed_runs(name, group):
-    # Every seed of one configuration at its best learning rate: [seed 42 (from the sweep), seed 43, seed 44].
-    best = best_of(load_group(group), name)
-    if best is None:
-        return []
-    lr, others = best["config"]["lr"], load_group(f"{group}_seeds")
-    return [best] + [
-        others[f"{name}_lr{lr:g}_s{s}"]
-        for s in SEEDS[1:]
-        if f"{name}_lr{lr:g}_s{s}" in others
-    ]
-
+    return {k: v for k, v in run["config"].items() if k not in ("name", "group", "seed")}
 
 
 # %% id="7KjzoXrcQLJa"
-import re
-
 # Readable names for tables and plots; the stored run names are unchanged
 DISPLAY = {
     "s0_vgg": "plain VGG", "s1_bn": "+ BatchNorm", "s2_gap": "+ global average pooling",
@@ -910,13 +807,12 @@ def summary(runs):
 
 
 def seed_summary(groups):
-    # One row per configuration, mean ± std over the seeds. groups: {label: [runs]}
-    rows = [{"network": label(name), "learning rate": runs[0]["config"]["lr"], "seeds": len(runs),
-             "parameters (M)": runs[0]["params"] / 1e6,
-             "validation (mean)": seed_mean(runs), "validation (std)": seed_std(runs),
-             "test (mean)": seed_mean(runs, "test_acc"), "test (std)": seed_std(runs, "test_acc"),
-             "final training (mean)": seed_mean(runs, "final_train_acc")}
-            for name, runs in groups.items() if runs]
+    # One row per configuration, mean ± std over the seeds. groups: {name: stored runs of its seeds}
+    rows = [{"network": label(name), "learning rate": t.lr.iloc[0], "seeds": len(t),
+             "parameters (M)": t.run.iloc[0]["params"] / 1e6,
+             "validation (mean)": t.val.mean(), "validation (std)": t.val.std(),
+             "test (mean)": t.test.mean(), "test (std)": t.test.std(), "final training (mean)": t.train.mean()}
+            for name, t in groups.items() if len(t)]
     return pd.DataFrame(rows).set_index("network").style.format(
         {"learning rate": "{:g}", "parameters (M)": "{:.2f}", "validation (mean)": "{:.3f}",
          "validation (std)": "{:.3f}", "test (mean)": "{:.3f}", "test (std)": "{:.3f}",
@@ -961,9 +857,8 @@ def plot_curves(runs, title=""):
 # training accuracy.
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="Wtr32tImQLJa" outputId="300d5da5-ff4b-4a91-905f-077b83240ec6"
-ladder = load_group("ladder")
-steps = {n: best_of(ladder, n) for n, _ in LADDER}
-steps = {n: r for n, r in steps.items() if r}
+steps = {n: best_lr("ladder", n) for n, _ in LADDER}
+steps = {n: r.run for n, r in steps.items() if r is not None}
 if steps:
     display(summary(steps))
 
@@ -985,6 +880,8 @@ if steps:
 #
 # The first three networks reach **100% training accuracy**: they memorize the training
 # set. The plain VGG does it very quickly in the early epochs, after which its validation loss *rises* while its training loss goes to zero. BatchNorm and global average pooling make the memorizing network generalize better, but do not stop the memorization of the training dataset. Augmentation does: once crop and flip are added, the training accuracy stays below 100% and the gap between training and validation accuracy shrinks.
+#
+#
 
 # %% [markdown]
 # ### Sensitivity to the learning rate
@@ -992,23 +889,21 @@ if steps:
 # Best validation accuracy of every step at each learning rate.
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 457} id="EREoptOEQLJa" outputId="b1f921c9-419f-4102-b418-108146e1c403"
-if ladder:
+if len(stored("ladder")):
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for i, (name, _) in enumerate(LADDER):
-        swept = sweep_runs(ladder, name)
-        if swept:
-            lrs = sorted(swept)
-            ax.plot(lrs, [swept[lr]["best_val_acc"] for lr in lrs], "o-", color=COLORS[i], label=label(name), markersize=8)
+        swept = stored("ladder", name, seed=SEEDS[0]).sort_values("lr")
+        if len(swept):
+            ax.plot(swept.lr, swept.val, "o-", color=COLORS[i], label=label(name), markersize=8)
     ax.set_xscale("log"); ax.set_xlabel("learning rate"); ax.set_ylabel("best validation accuracy")
     ax.set_title("every step of the roadmap across learning rates"); ax.legend(fontsize=8)
     plt.tight_layout(); plt.show()
 
 # %% [markdown]
-# The plain VGG, without BatchNorm, diverges at learning rate 0.1 and reaches only 4% at 0.05; with BatchNorm every
-# learning rate trains, and the best one gives 11.7 more points. After global average pooling the best learning rate moves from 0.01 to 0.05–0.1, and 0.01 becomes clearly worse. A single learning rate for every step would have penalized some of them: this is why
+# The plain VGG, without BatchNorm, diverges at learning rate 0.1 and reaches only 4% at 0.05; with BatchNorm every learning rate trains, and the best one gives 11.7 more points. After global average pooling the best learning rate moves from 0.01 to 0.05–0.1, and 0.01 becomes clearly worse. A single learning rate for every step would have penalized some of them: this is why
 # every configuration is compared at its own best.
 #
-# With augmentation and a fourth stage the network is regularized and still improving: the next question is whether it benefits from more depth.
+# **At this point the target accuracy for this part** (~50%) is satisfied, but since with the use of augmentation and the forth stage the network was still improving we decided to go further and explore wheter **more depth, residual connections and a tuned training recipe** could benefit overall.
 
 # %% [markdown]
 # ## 2. Depth and residual connections
@@ -1022,10 +917,7 @@ if ladder:
 # - **two blocks per stage**: 19 layers, the stage layout of ResNet-18
 # - **3, 4, 6 and 1 blocks**: 31 layers,the layout of ResNet-34 with one block in the last stage
 #
-# Within a depth, the two networks differ only by the skip connections. Lecture 5 notes that deeper plain networks show
-# **higher training error**, so the problem is optimization, not overfitting: this is the signature to look for in the
-# training accuracy. Each network is trained at three learning rates, then with two more seeds at its best one, since
-# run-to-run variation (1–2 points) is comparable to the differences between networks.
+# Within a depth, the two networks differ only by the skip connections.
 
 # %% [markdown]
 # ### Results
@@ -1035,8 +927,8 @@ if ladder:
 # seed-42 runs.
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="RaFm2k7bQLJa" outputId="4a7e304e-7665-41ad-ad70-eea0de276bbc"
-grid_runs = {n: seed_runs(n, "depth_residual") for n, _ in GRID}
-grid_runs = {n: r for n, r in grid_runs.items() if r}
+grid_runs = {n: at_best_lr("depth_residual", n) for n, _ in GRID}
+grid_runs = {n: t for n, t in grid_runs.items() if len(t)}
 if grid_runs:
     display(seed_summary(grid_runs))
 
@@ -1046,16 +938,16 @@ if grid_runs:
         names = [n for n in grid_runs if n.startswith(kind + "_")]
         if not names:
             continue
-        for ax, key in zip(axes, ("best_val_acc", "final_train_acc")):
-            ax.errorbar([convs[n] for n in names], [seed_mean(grid_runs[n], key) for n in names],
-                        yerr=[np.nan_to_num(seed_std(grid_runs[n], key)) for n in names],
+        for ax, key in zip(axes, ("val", "train")):
+            ax.errorbar([convs[n] for n in names], [grid_runs[n][key].mean() for n in names],
+                        yerr=[np.nan_to_num(grid_runs[n][key].std()) for n in names],
                         fmt="o-", color=c, capsize=4, markersize=8, label=kind_label)
     for ax, t in zip(axes, ("best validation accuracy", "final training accuracy")):
         ax.set_xlabel("convolutional layers"); ax.set_ylabel(t); ax.set_xticks(sorted(set(convs.values())))
         ax.set_title(f"{t} vs depth (mean ± std over seeds)"); ax.legend()
     plt.tight_layout(); plt.show()
 
-    plot_curves({n: r[0] for n, r in grid_runs.items()}, "depth and residual connections (seed 42, best learning rate)")
+    plot_curves({n: t.run.iloc[0] for n, t in grid_runs.items()}, "depth and residual connections (seed 42, best learning rate)")
 
 
 # %% [markdown]
@@ -1100,10 +992,10 @@ if grid_runs:
 
 def finalists(n=TUNE_N):
     # The n networks of the grid with the highest mean validation accuracy over the seeds.
-    done = {name: seed_runs(name, "depth_residual") for name, _ in GRID}
-    if any(len(r) < len(SEEDS) for r in done.values()):
+    done = {name: at_best_lr("depth_residual", name) for name, _ in GRID}
+    if any(len(t) < len(SEEDS) for t in done.values()):
         return None
-    return sorted(done, key=lambda name: -seed_mean(done[name]))[:n]
+    return sorted(done, key=lambda name: -done[name].val.mean())[:n]
 
 
 def simplicity(name):
@@ -1115,89 +1007,38 @@ def simplicity(name):
 def select(runs_by_net, prefix="", verbose=True):
     # The selection rule: highest mean validation accuracy over the seeds; if the best two are within one standard
     # deviation of each other, the simpler network. Returns (ranked names, selected name).
-    ranked = sorted(runs_by_net, key=lambda n: -seed_mean(runs_by_net[n]))
+    ranked = sorted(runs_by_net, key=lambda n: -runs_by_net[n].val.mean())
     first, second = ranked[0], ranked[1]
-    diff = seed_mean(runs_by_net[first]) - seed_mean(runs_by_net[second])
-    noise = max(seed_std(runs_by_net[first]), seed_std(runs_by_net[second]))
+    diff = runs_by_net[first].val.mean() - runs_by_net[second].val.mean()
+    noise = max(runs_by_net[first].val.std(), runs_by_net[second].val.std())
     selected = first if diff > noise else min((first, second), key=simplicity)
     if verbose:
         for n in ranked:
-            runs = runs_by_net[n]
-            print(f"{label(n):20s} {prefix}validation {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
-                  f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f} | "
-                  f"train {seed_mean(runs, 'final_train_acc'):.3f}")
+            t = runs_by_net[n]
+            print(f"{label(n):20s} {prefix}validation {t.val.mean():.3f} ± {t.val.std():.3f} | "
+                  f"test {t.test.mean():.3f} ± {t.test.std():.3f} | train {t.train.mean():.3f}")
         print(f"-> {label(first)}: better by {diff:.3f}, more than one standard deviation ({noise:.3f})" if diff > noise
               else f"-> a tie ({diff:.3f} <= {noise:.3f}): the simpler network, {label(selected)}")
     return ranked, selected
 
 
-
 # %%
-# The three steps of the recipe search: grid, random configurations, confirmation with seeds.
+# The recipe search of one network: grid of learning rate x weight decay, random configurations, confirmation with seeds.
 
-def random_configs():
-    # The N_RANDOM configurations of the random search: drawn once, identical for every network.
-    rng = np.random.RandomState(SEARCH_SEED)
-    configs, seen = [], set()
-    while len(configs) < N_RANDOM:
-        cfg = {k: v[rng.randint(len(v))] for k, v in SEARCH_SPACE.items()}
-        key = json.dumps(cfg)
-        if key not in seen:
-            seen.add(key)
-            if cfg["schedule"] == "cosine":
-                del cfg[
-                    "schedule"
-                ]  # cosine is the default: keep the stored config minimal
-            configs.append(cfg)
-    return configs
-
-
-def runs_of(group, name):
-    # The runs of one network in a group, keyed by run name.
-    return {n: r for n, r in load_group(group).items() if n.startswith(name + "_")}
-
-
-def tuning_runs(name):
-    # Every seed-42 run of the recipe search (grid + random) of one network, keyed by run name.
-    return {**runs_of("tune_grid", name), **runs_of("tune_random", name)}
-
-
-def best_grid_point(name):
-    grid = runs_of("tune_grid", name)
-    if len(grid) < len(TUNE_LRS) * len(TUNE_WDS):
-        return None
-    best = max(grid.values(), key=lambda r: r["best_val_acc"])
-    return best["config"]["lr"], best["config"]["weight_decay"]
-
-
-def top_configs(name):
-    # The TOP_K best runs of the search of one network (seed 42).
-    runs = tuning_runs(name)
-    return sorted(runs.values(), key=lambda r: -r["best_val_acc"])[:TOP_K]
+def search_runs(name):
+    # The seed-42 runs of the recipe search of one network: grid points ("lr…_wd…") and random configurations ("cfg…").
+    return stored("recipe", name, seed=SEEDS[0])
 
 
 def confirmed(name):
-    # {run name: [seed 42, 43, 44]} for the TOP_K configurations of one network.
-    seeds = load_group("tune_seeds")
-    return {
-        r["name"]: [r]
-        + [
-            seeds[f"{r['name']}_s{s}"]
-            for s in SEEDS[1:]
-            if f"{r['name']}_s{s}" in seeds
-        ]
-        for r in top_configs(name)
-    }
+    # {variant: runs over the seeds} for the TOP_K best configurations of the search of one network.
+    top = search_runs(name).sort_values("val", ascending=False, kind="stable").variant[:TOP_K]
+    return {v: stored("recipe", name, v) for v in top}
 
 
 def best_tuned(name):
-    # (configuration name, [runs over the seeds]) of the best configuration of the recipe search of one network.
-    conf = {n: runs for n, runs in confirmed(name).items() if len(runs) == len(SEEDS)}
-    if not conf:
-        return None
-    best = max(conf, key=lambda n: seed_mean(conf[n]))
-    return best, conf[best]
-
+    # (variant, runs over the seeds) of the best configuration of the recipe search of one network.
+    return best_confirmed(confirmed(name))
 
 
 # %% [markdown]
@@ -1207,13 +1048,13 @@ def best_tuned(name):
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 353} id="neNY--9cQLJa" outputId="be6ede74-60b1-438b-eb75-41c46a95663d"
 names = finalists(TUNE_N) or []
-grid_runs_t = load_group("tune_grid")
-if names and grid_runs_t:
+if names and len(stored("recipe")):
     fig, axes = plt.subplots(1, len(names), figsize=(15, 4.2), sharey=True)
     for ax, name in zip(axes, names):
+        grid = search_runs(name).set_index("variant").val
         points = []
         for lr, c in zip(TUNE_LRS, ("#9b9990", COLORS[0])):
-            acc = [100 * grid_runs_t.get(f"{name}_lr{lr:g}_wd{wd:g}", {}).get("best_val_acc", np.nan) for wd in TUNE_WDS]
+            acc = [100 * grid.get(f"lr{lr:g}_wd{wd:g}", np.nan) for wd in TUNE_WDS]
             ax.plot(TUNE_WDS, acc, "o-", color=c, lw=2, markersize=7, label=f"learning rate {lr:g}")
             points += zip(TUNE_WDS, acc)
         wd, acc = max(points, key=lambda p: np.nan_to_num(p[1]))
@@ -1237,19 +1078,18 @@ if names and grid_runs_t:
 # line through its parameter values, ending at its mean accuracy over the three networks (dark blue: the best configuration, light blue: the second best).
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 754} id="0UkjEj6DQLJa" outputId="ce26e558-8779-42b3-9db8-beb361b5f4dd"
-random_runs = load_group("tune_random")
-configs = random_configs()
-if names and random_runs:
-    rows = []
-    for i, c in enumerate(configs):
-        row = {"configuration": label(f"cfg{i:02d}"), "label smoothing": c["label_smoothing"],
-               "dropout": c["dropout"], "random erasing": c["random_erasing"], "minimum crop": c["crop_scale"][0],
-               "schedule": c.get("schedule", "cosine")}
-        for name in names:
-            r = random_runs.get(f"{name}_cfg{i:02d}")
-            row[label(name)] = r["best_val_acc"] if r else np.nan
-        rows.append(row)
-    table = pd.DataFrame(rows).set_index("configuration")
+search = stored("recipe", seed=SEEDS[0])
+search = search[search.variant.str.startswith("cfg") & search.network.isin(names)]
+if len(search):
+    # one row per random configuration (its parameters are the same on every network), one column per network
+    configs = search.drop_duplicates("variant").set_index("variant").sort_index()
+    accuracy = search.pivot(index="variant", columns="network", values="val").reindex(configs.index)
+    table = pd.DataFrame({"configuration": [label(v) for v in configs.index],
+                          "label smoothing": configs.label_smoothing.to_numpy(), "dropout": configs.dropout.to_numpy(),
+                          "random erasing": configs.random_erasing.to_numpy(),
+                          "minimum crop": [c[0] for c in configs.crop_scale],
+                          "schedule": configs.schedule.fillna("cosine").to_numpy(),
+                          **{label(n): accuracy[n].to_numpy() for n in names}}).set_index("configuration")
     nets = [label(n) for n in names]
     table["mean"] = table[nets].mean(axis=1)
     display(table.sort_values("mean", ascending=False).style.format({n: "{:.3f}" for n in nets + ["mean"]}))
@@ -1303,17 +1143,17 @@ if names and random_runs:
 if names:
     groups, best_per_net = {}, {}
     for name in names:
-        for n, runs in confirmed(name).items():
-            if len(runs) == len(SEEDS):
-                groups[f"{label(name)} | {label(n.removeprefix(name + '_'))}"] = runs
+        for variant, t in confirmed(name).items():
+            if len(t) == len(SEEDS):
+                groups[f"{label(name)} | {label(variant)}"] = t
         if best_tuned(name):
             best_per_net[name] = best_tuned(name)
     if groups:
         display(seed_summary(groups))
     if len(best_per_net) == len(names):
-        ranked, selected = select({n: runs for n, (_, runs) in best_per_net.items()})
-        print("configuration:", run_overrides(best_per_net[selected][1][0]))
-        plot_curves({f"{label(n)} ({label(best_per_net[n][0].removeprefix(n + '_'))})": best_per_net[n][1][0]
+        ranked, selected = select({n: t for n, (_, t) in best_per_net.items()})
+        print("configuration:", run_overrides(best_per_net[selected][1].run.iloc[0]))
+        plot_curves({f"{label(n)} ({label(best_per_net[n][0])})": best_per_net[n][1].run.iloc[0]
                      for n in ranked}, "best tuned configuration of each network (seed 42)")
 
 
@@ -1342,26 +1182,20 @@ if names:
 
 def long_runs(name):
     # The longer trainings of one network, over the seeds.
-    group = load_group("long")
-    return [
-        group[f"{name}_ep{LONG_EPOCHS}_s{s}"]
-        for s in SEEDS
-        if f"{name}_ep{LONG_EPOCHS}_s{s}" in group
-    ]
+    return stored("long", name, f"ep{LONG_EPOCHS}")
 
 
 def long_final():
-    # {network: [runs over the seeds]} at LONG_EPOCHS, for the tuned networks; None until all are trained.
+    # {network: runs over the seeds} at LONG_EPOCHS, for the tuned networks; None until all are trained.
     names = finalists(TUNE_N) or []
-    runs = {n: long_runs(n) for n in names}
-    return runs if names and all(len(r) == len(SEEDS) for r in runs.values()) else None
+    by_net = {n: long_runs(n) for n in names}
+    return by_net if names and all(len(t) == len(SEEDS) for t in by_net.values()) else None
 
 
 def final_network():
     # The final model: the selection rule applied after the longer training (None until it is trained).
-    runs = long_final()
-    return select(runs, verbose=False)[1] if runs else None
-
+    by_net = long_final()
+    return select(by_net, verbose=False)[1] if by_net else None
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="eJj0cSoOQLJZ" outputId="28f103dc-8786-4326-e9ec-7d6b69800de6"
@@ -1369,23 +1203,12 @@ def final_network():
 # The final model, stated explicitly: res_3461 with the best configuration of its recipe search (cfg05), trained
 # for LONG_EPOCHS epochs. Its ablations each change exactly one component of this configuration.
 FINAL_NET = "res_3461"
-FINAL_CONFIG = {
-    **dict(GRID)[FINAL_NET],
-    **RECIPE,
-    "lr": 0.05,
-    "weight_decay": 5e-3,
-    "label_smoothing": 0.2,
-    "dropout": 0.0,
-    "random_erasing": 0.25,
-    "crop_scale": (0.5, 1.0),
-    "schedule": "onecycle",
-    "epochs": LONG_EPOCHS,
-}
+FINAL_CONFIG = {**dict(GRID)[FINAL_NET], **RECIPE, "lr": 0.05, "weight_decay": 5e-3, "label_smoothing": 0.2,
+                "dropout": 0.0, "random_erasing": 0.25, "crop_scale": (0.5, 1.0), "schedule": "onecycle",
+                "epochs": LONG_EPOCHS}
 if TRAIN:
     for seed in SEEDS:
-        run_experiment(f"{FINAL_NET}_ep{LONG_EPOCHS}_s{seed}", "long", note=f"cfg05, {LONG_EPOCHS} epochs",
-                       **{**FINAL_CONFIG, "seed": seed})
-    report_runs()
+        run_experiment(f"{FINAL_NET}_ep{LONG_EPOCHS}_s{seed}", "long", **{**FINAL_CONFIG, "seed": seed})
 
 
 # %% [markdown]
@@ -1400,19 +1223,19 @@ groups = {}
 for name in names:
     if best_tuned(name):
         groups[f"{label(name)} | {BASE['epochs']} epochs"] = best_tuned(name)[1]
-    if long_runs(name):
+    if len(long_runs(name)):
         groups[f"{label(name)} | {LONG_EPOCHS} epochs"] = long_runs(name)
 if groups:
     display(seed_summary(groups))
 
-runs = long_final()
-if runs:
-    ranked, final = select(runs, f"{LONG_EPOCHS} epochs: ")
-    print("final configuration:", run_overrides(runs[final][0]))
+by_net = long_final()
+if by_net:
+    ranked, final = select(by_net, f"{LONG_EPOCHS} epochs: ")
+    print("final configuration:", run_overrides(by_net[final].run.iloc[0]))
     curves = {}
     for n in ranked:
-        curves[f"{label(n)} | {BASE['epochs']} epochs"] = best_tuned(n)[1][0]
-        curves[f"{label(n)} | {LONG_EPOCHS} epochs"] = runs[n][0]
+        curves[f"{label(n)} | {BASE['epochs']} epochs"] = best_tuned(n)[1].run.iloc[0]
+        curves[f"{label(n)} | {LONG_EPOCHS} epochs"] = by_net[n].run.iloc[0]
     plot_curves(curves, f"tuned networks: {BASE['epochs']} vs {LONG_EPOCHS} epochs (seed 42)")
 
 # %% [markdown]
@@ -1460,9 +1283,7 @@ if runs:
 # %%
 # The ablations of the final model: each one changes exactly one component of its configuration
 ABLATION_GROUP = "ablation"
-ABLATION_LR_CONTROL = (
-    0.01  # lr of the control runs for the components that make training unstable
-)
+ABLATION_LR_CONTROL = 0.01  # lr of the control runs for the components that make training unstable
 
 
 def make_ablations(base):
@@ -1481,14 +1302,11 @@ def make_ablations(base):
         "no_weight_decay": ("recipe", dict(weight_decay=0.0)),
         "cosine": ("recipe", dict(schedule="cosine")),
         "no_batchnorm_lr0.01": ("control", dict(batchnorm=False, lr=ABLATION_LR_CONTROL)),
-        "no_gap_lr0.01": ("control", dict(gap=False, lr=ABLATION_LR_CONTROL))
+        "no_gap_lr0.01": ("control", dict(gap=False, lr=ABLATION_LR_CONTROL)),
     }
     same = lambda a, b: json.dumps(a) == json.dumps(b)  # tuples and lists compare equal
-    return {
-        n: (kind, over)
-        for n, (kind, over) in candidates.items()
-        if any(not same(base.get(k), v) for k, v in over.items())
-    }
+    return {n: (kind, over) for n, (kind, over) in candidates.items()
+            if any(not same(base.get(k), v) for k, v in over.items())}
 
 
 ABLATION_BASE = {**BASE, **FINAL_CONFIG}
@@ -1498,9 +1316,8 @@ ABLATIONS = make_ablations(ABLATION_BASE)
 selected = final_network()
 if selected is None:
     print("the longer runs are not stored: FINAL_CONFIG is not checked against the selection rule")
-elif selected != FINAL_NET or run_overrides(long_runs(selected)[0]) != json.loads(
-    json.dumps({k: v for k, v in ABLATION_BASE.items() if k != "seed"})
-):
+elif selected != FINAL_NET or run_overrides(long_runs(selected).run.iloc[0]) != json.loads(
+        json.dumps({k: v for k, v in ABLATION_BASE.items() if k != "seed"})):
     print(f"WARNING: the selection rule picks {selected}, not FINAL_CONFIG")
 print(f"final model: {FINAL_NET}, {ABLATION_BASE['epochs']} epochs, lr {ABLATION_BASE['lr']:g}")
 for name, (kind, over) in ABLATIONS.items():
@@ -1512,13 +1329,7 @@ for name, (kind, over) in ABLATIONS.items():
 if TRAIN:
     for name, (kind, over) in ABLATIONS.items():
         for seed in SEEDS:
-            run_experiment(
-                f"{name}_s{seed}",
-                ABLATION_GROUP,
-                note=f"ablation: {name}",
-                **{**ABLATION_BASE, **over, "seed": seed},
-            )
-    report_runs()
+            run_experiment(f"{name}_s{seed}", ABLATION_GROUP, **{**ABLATION_BASE, **over, "seed": seed})
 
 # %% [markdown]
 # ### Results of the ablation
@@ -1529,98 +1340,41 @@ if TRAIN:
 
 # %%
 def ablation_table():
-    # One row per configuration: full model first, then the ablations; None until at least one run exists.
-    runs = load_group(ABLATION_GROUP)
+    # One row per configuration, full model first: mean and standard deviation over the seeds and change against the
+    # full model. Runs that diverged before the first validation are left out of the means.
     groups = {"full model": ("", {}, long_runs(FINAL_NET))}
-    for name, (kind, over) in ABLATIONS.items():
-        got = [runs[f"{name}_s{s}"] for s in SEEDS if f"{name}_s{s}" in runs]
-        if got:
-            groups[name] = (kind, over, got)
+    groups.update({name: (kind, over, stored(ABLATION_GROUP, name)) for name, (kind, over) in ABLATIONS.items()})
+    groups = {name: g for name, g in groups.items() if len(g[2])}
     if len(groups) == 1:
         return None
-
-    def stats(rs, key):
-        v = np.array([r[key] for r in rs if r["best_epoch"] > 0], dtype=float)
-        return (
-            (v.mean(), v.std(ddof=1) if len(v) > 1 else np.nan)
-            if len(v)
-            else (np.nan, np.nan)
-        )
-
-    ref_val, ref_test = (
-        stats(groups["full model"][2], "best_val_acc"),
-        stats(groups["full model"][2], "test_acc"),
-    )
     rows = []
-    for name, (kind, over, rs) in groups.items():
-        val, test = stats(rs, "best_val_acc"), stats(rs, "test_acc")
-        train, gap = (
-            stats(rs, "final_train_acc")[0],
-            np.nanmean([r["final_train_acc"] - r["final_val_acc"] for r in rs]),
-        )
-        noise = np.nanmax([val[1], ref_val[1]])
-        rows.append(
-            dict(
-                run=name,
-                kind=kind,
-                change=", ".join(f"{k}={v}" for k, v in over.items()),
-                lr=rs[0]["config"]["lr"],
-                params_M=rs[0]["params"] / 1e6,
-                seeds=len(rs),
-                diverged=f"{sum(r['diverged'] for r in rs)}/{len(rs)}",
-                val_mean=val[0],
-                val_std=val[1],
-                d_val=val[0] - ref_val[0],
-                test_mean=test[0],
-                test_std=test[1],
-                d_test=test[0] - ref_test[0],
-                train=train,
-                gap=gap,
-                beyond_noise=(
-                    ""
-                    if name == "full model"
-                    else "yes"
-                    if ref_val[0] - val[0] > noise
-                    else "no"
-                ),
-            )
-        )
-    return pd.DataFrame(rows).set_index("run")
+    for name, (kind, over, t) in groups.items():
+        ok = t[[r["best_epoch"] > 0 for r in t.run]]
+        rows.append(dict(run=name, kind=kind, change=", ".join(f"{k}={v}" for k, v in over.items()),
+                         val_mean=ok.val.mean(), val_std=ok.val.std(), test_mean=ok.test.mean(), test_std=ok.test.std(),
+                         train=ok.train.mean(), gap=np.nanmean([r["final_train_acc"] - r["final_val_acc"] for r in t.run])))
+    table = pd.DataFrame(rows).set_index("run")
+    full = table.loc["full model"]
+    table["d_val"], table["d_test"] = table.val_mean - full.val_mean, table.test_mean - full.test_mean
+    noise = np.fmax(table.val_std, full.val_std)  # the larger standard deviation of the two
+    table["beyond_noise"] = np.where(full.val_mean - table.val_mean > noise, "yes", "no")
+    table.loc["full model", "beyond_noise"] = ""
+    return table
 
 
-ABLATION_COLUMNS = ["kind", "change", "d_val", "d_test", "gap", "beyond_noise"]  # the columns shown in the table
+# the columns shown in the table, and their names
+ABLATION_COLUMNS = {"kind": "kind", "change": "change", "d_val": "Δ val", "d_test": "Δ test", "gap": "train-val gap",
+                    "beyond_noise": "beyond noise"}
 
 
 def style_ablation(table):
-    return (
-        table[ABLATION_COLUMNS].rename(
-            columns={
-                "d_val": "Δ val",
-                "d_test": "Δ test",
-                "val_mean": "val",
-                "val_std": "± val",
-                "test_mean": "test",
-                "test_std": "± test",
-                "train": "train acc",
-                "gap": "train-val gap",
-                "params_M": "params (M)",
-                "beyond_noise": "beyond noise",
-            }
-        )
-        .style.format(
-            {"Δ val": "{:+.3f}", "Δ test": "{:+.3f}", "train-val gap": "{:+.3f}"},
-            na_rep="-",
-        )
-        .background_gradient(
-            subset=["Δ val", "Δ test"], cmap="RdYlGn", vmin=-0.4, vmax=0.4
-        )
-        .set_properties(
-            subset=pd.IndexSlice["full model", :], **{"font-weight": "bold"}
-        )
-    )
+    return (table[list(ABLATION_COLUMNS)].rename(columns=ABLATION_COLUMNS)
+            .style.format({"Δ val": "{:+.3f}", "Δ test": "{:+.3f}", "train-val gap": "{:+.3f}"}, na_rep="-")
+            .background_gradient(subset=["Δ val", "Δ test"], cmap="RdYlGn", vmin=-0.4, vmax=0.4)
+            .set_properties(subset=pd.IndexSlice["full model", :], **{"font-weight": "bold"}))
 
 
-ablation = ablation_table() if FINAL_NET is not None and long_runs(FINAL_NET) else None
+ablation = ablation_table() if len(long_runs(FINAL_NET)) else None
 if ablation is None:
     print("no ablation run yet: run the cell above")
 else:
@@ -1643,80 +1397,24 @@ else:
 
 # %%
 if ablation is not None:
-    runs = load_group(ABLATION_GROUP)
     # the ablations discussed in the text: training collapse without BatchNorm, overfitting without the regularizers
     names = ["no_batchnorm", "no_batchnorm_lr0.01", "no_augmentation", "no_weight_decay"]
-    reference = long_runs(FINAL_NET)[0]
-    cols = 4
-    rows_ = int(np.ceil(len(names) / cols))
-    fig, axes = plt.subplots(
-        rows_, cols, figsize=(4.6 * cols, 3.4 * rows_), sharey=True, squeeze=False
-    )
-    for ax, name in zip(axes.ravel(), names):
-        r = runs[f"{name}_s{SEEDS[0]}"] if f"{name}_s{SEEDS[0]}" in runs else None
-        for curve_name, run, color in (
-            ("full model", reference, COLORS[0]),
-            (name, r, COLORS[1]),
-        ):
+    reference = long_runs(FINAL_NET).run.iloc[0]
+    fig, axes = plt.subplots(1, len(names), figsize=(4.6 * len(names), 3.4), sharey=True)
+    for ax, name in zip(axes, names):
+        ablated = stored(ABLATION_GROUP, name, seed=SEEDS[0]).run
+        for curve_name, run, color in (("full model", reference, COLORS[0]),
+                                       (name, ablated.iloc[0] if len(ablated) else None, COLORS[1])):
             if run is None or not run["history"]["val_acc"]:
                 continue
             h = run["history"]
             ep = range(1, len(h["val_acc"]) + 1)
             ax.plot(ep, h["val_acc"], color=color, label=curve_name)
             ax.plot(ep, h["train_acc"], color=color, ls="--", lw=1.3)
-        ax.set_title(name, fontsize=10)
-        ax.set_xlabel("epoch")
-        ax.legend(fontsize=7, loc="lower right")
-    for ax in axes.ravel()[len(names) :]:
-        ax.axis("off")
-    axes[0, 0].set_ylabel("accuracy")
-    fig.suptitle(
-        "validation (solid) and training (dashed) accuracy: full model vs ablation, seed 42"
-    )
-    plt.tight_layout()
-    plt.show()
-
-# %% [markdown]
-# ## 6. Error analysis of the final model
-#
-# Where does the final model fail? We use the test predictions stored with each run: the per-class accuracy of the
-# three seeds and the pairs of variants the model confuses most often (seed 42). Class names are shown when the dataset
-# is available.
-
-# %%
-final = final_network()
-if final is None:
-    print("train the longer runs first")
-else:
-    names_of = globals().get("CLASSES") or [f"class {i}" for i in range(N_CLASSES)]
-    runs = long_runs(final)
-
-    # per-class test accuracy, mean over the seeds
-    per_class = []
-    for r in runs:
-        true, pred = np.array(r["test_true"]), np.array(r["test_pred"])
-        per_class.append(np.bincount(true, weights=(pred == true), minlength=N_CLASSES) / np.bincount(true, minlength=N_CLASSES))
-    per_class = np.mean(per_class, axis=0)
-
-    # most frequent confusions (seed 42)
-    true, pred = np.array(runs[0]["test_true"]), np.array(runs[0]["test_pred"])
-    cm = np.zeros((N_CLASSES, N_CLASSES), dtype=int)
-    np.add.at(cm, (true, pred), 1)
-    off = cm.copy(); np.fill_diagonal(off, 0)
-    top = np.dstack(np.unravel_index(np.argsort(off, axis=None)[::-1][:10], off.shape))[0]
-    display(pd.DataFrame([dict(true=names_of[t], predicted=names_of[p], errors=off[t, p],
-                               share_of_class=off[t, p] / cm[t].sum()) for t, p in top])
-            .style.format({"share_of_class": "{:.0%}"}))
-
-    fig, ax = plt.subplots(figsize=(8, 3.8))
-    ax.hist(per_class, bins=np.linspace(0, 1, 21).tolist(), color=COLORS[0], edgecolor="white")
-    ax.axvline(per_class.mean(), color=COLORS[1], ls="--", lw=1.5, label=f"mean {per_class.mean():.1%}")
-    ax.set_xlabel("test accuracy of the class (mean over seeds)"); ax.set_ylabel("number of classes")
-    ax.set_title(f"{label(final)}: per-class test accuracy"); ax.legend()
+        ax.set_title(name, fontsize=10); ax.set_xlabel("epoch"); ax.legend(fontsize=7, loc="lower right")
+    axes[0].set_ylabel("accuracy")
+    fig.suptitle("validation (solid) and training (dashed) accuracy: full model vs ablation, seed 42")
     plt.tight_layout(); plt.show()
-
-# %% [markdown]
-# The table shows how all ten of the most frequent confusions are between variants of the same family. The histogram shows that most classes reach 70–90%, while a tail of 7 classes below 50%. The model recognizes the aircraft family. Its remaining errors are the fine-grained differences between variants.
 
 # %% [markdown]
 # ## Conclusions
@@ -1731,8 +1429,7 @@ else:
 #
 # Finally, not every choice of the search turned out to matter: the ablation shows that some components selected
 # at 70 epochs bring no measurable benefit in the final model, while BatchNorm, which we added first, is the one the
-# network cannot do without. The remaining errors are between near-identical variants of the same aircraft, the
-# difficulty that makes this task fine-grained.
+# network cannot do without.
 
 # %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
@@ -1766,34 +1463,16 @@ else:
 
 # %%
 # the training hyperparameters of the best model of Part 1 (res_3461, configuration cfg05), applied to the pretrained net
-FINETUNE = dict(
-    pretrained=True,
-    augment=True,
-    crop_scale=(0.5, 1.0),
-    dropout=0.0,
-    epochs=LONG_EPOCHS,
-    lr=0.05,
-    weight_decay=5e-3,
-    label_smoothing=0.2,
-    random_erasing=0.25,
-    schedule="onecycle",
-)
+FINETUNE = dict(pretrained=True, augment=True, crop_scale=(0.5, 1.0), dropout=0.0, epochs=LONG_EPOCHS, lr=0.05,
+                weight_decay=5e-3, label_smoothing=0.2, random_erasing=0.25, schedule="onecycle")
 
-# sanity check: same recipe as the stored best configuration of res_3461 in Part 1, when it is available
+# check: the same recipe as the stored best configuration of res_3461 in Part 1
 best = best_tuned(FINAL_NET)
 if best is not None:
-    stored = run_overrides(best[1][0])
-    differences = {
-        k: (stored.get(k), v)
-        for k, v in FINETUNE.items()
-        if k not in ("pretrained", "epochs")
-        and json.loads(json.dumps(stored.get(k))) != json.loads(json.dumps(v))
-    }
-    print(
-        "same recipe as Part 1"
-        if not differences
-        else f"WARNING: differs from Part 1 (part 1, here): {differences}"
-    )
+    reference = run_overrides(best[1].run.iloc[0])
+    differences = {k: (reference.get(k), v) for k, v in FINETUNE.items() if k not in ("pretrained", "epochs")
+                   and json.loads(json.dumps(reference.get(k))) != json.loads(json.dumps(v))}
+    print("same recipe as Part 1" if not differences else f"WARNING: differs from Part 1 (part 1, here): {differences}")
 
 # %% [markdown]
 # ### Fine-tuning
@@ -1805,15 +1484,7 @@ if best is not None:
 # [run]
 if TRAIN:
     for seed in SEEDS:
-        run_experiment(
-            f"resnet18_ft_s{seed}",
-            "finetune",
-            note="hyperparameters of part 1",
-            results_dir=RESULTS_DIR_2A,
-            seed=seed,
-            **FINETUNE,
-        )
-    report_runs()
+        run_experiment(f"resnet18_ft_s{seed}", "finetune", results_dir=RESULTS_DIR_2A, seed=seed, **FINETUNE)
 
 # %% [markdown]
 # ### Results of 2A
@@ -1822,21 +1493,15 @@ if TRAIN:
 # hyperparameters (`res_3461`, 150 epochs). The curves are the seed-42 runs.
 
 # %%
-finetune = load_group("finetune", RESULTS_DIR_2A)
-groups = {
-    "resnet18_ft (pretrained, 2A)": list(finetune.values()),
-    f"{FINAL_NET} (from scratch, part 1)": long_runs(FINAL_NET),
-}
-groups = {k: v for k, v in groups.items() if v}
-if groups:
+finetune = stored("finetune")
+groups = {"resnet18_ft (pretrained, 2A)": finetune, f"{FINAL_NET} (from scratch, part 1)": long_runs(FINAL_NET)}
+groups = {k: t for k, t in groups.items() if len(t)}
+if len(finetune):
     display(seed_summary(groups))
-    plot_curves(
-        {group_name: runs[0] for group_name, runs in groups.items()},
-        "pretrained ResNet-18 vs. from scratch (seed 42)",
-    )
+    plot_curves({k: t.run.iloc[0] for k, t in groups.items()}, "pretrained ResNet-18 vs. from scratch (seed 42)")
 
     # the accuracy of the pretrained network against its learning rate (seed 42)
-    h = groups["resnet18_ft (pretrained, 2A)"][0]["history"]
+    h = finetune.run.iloc[0]["history"]
     ep = range(1, len(h["lr"]) + 1)
     fig, ax = plt.subplots(figsize=(9, 4))
     ax.plot(ep, h["val_acc"], color=COLORS[0], label="validation accuracy")
@@ -1882,49 +1547,30 @@ else:
 # we load and analyze the stored runs.
 
 # %%
-def best_in_group(group):
-    # The run with the highest validation accuracy of one group of 2B (None if there is none).
-    runs = load_group(group, RESULTS_DIR_2B)
-    return max(runs.values(), key=lambda r: r["best_val_acc"]) if runs else None
-
-
-def grid_table(runs, row_key, col_key, metric="best_val_acc"):
-    # The metric of the runs of a grid, with one hyperparameter on the rows and one on the columns.
-    records = [{row_key: r["config"][row_key], col_key: r["config"][col_key], metric: r[metric]} for r in runs.values()]
-    table = pd.DataFrame(records).pivot(index=row_key, columns=col_key, values=metric)
-    return table.style.background_gradient(cmap="Blues", axis=None).format("{:.3f}")
+def grid(t, rows, cols):
+    # Best validation accuracy of a grid of runs, one hyperparameter on the rows and one on the columns (the values of
+    # each run's own configuration: in the table of all the runs, a key missing from some runs becomes a float).
+    keys = pd.DataFrame({k: [r["config"][k] for r in t.run] for k in (rows, cols)}).assign(val=t.val.to_numpy())
+    return keys.pivot(index=rows, columns=cols, values="val").style.background_gradient(cmap="Blues", axis=None).format("{:.3f}")
 
 
 def config_table(runs, keys):
-    # One row per run: the hyperparameters that differ between the runs of a group, and its accuracy.
+    # One row per run ({label: run}): the hyperparameters that differ between the runs, and its accuracy.
     rows = [{**{k: r["config"].get(k) for k in keys}, "best validation": r["best_val_acc"], "test": r["test_acc"],
              "final training": r["final_train_acc"], "best epoch": r["best_epoch"]} for r in runs.values()]
     return pd.DataFrame(rows, index=list(runs)).style.format(
         {"best validation": "{:.3f}", "test": "{:.3f}", "final training": "{:.3f}"}, na_rep="-")
 
 
-def best_per_value(runs, key):
-    # For each value of one hyperparameter, the run with the best validation accuracy: {label: run}.
-    values = sorted({r["config"][key] for r in runs.values()})
-    return {f"{key} {v:g}": max((r for r in runs.values() if r["config"][key] == v), key=lambda r: r["best_val_acc"])
-            for v in values}
+def best_per(t, key):
+    # For each value of one hyperparameter (increasing), the run with the best validation accuracy.
+    return [best_run(g).run for _, g in t.groupby(key)]
 
 
 def confirmed_s5():
-    # {run name: [seed 42, 43, 44]} for the TOP_K best recipes of step 5.
-    reg, extra = load_group("s5_reg", RESULTS_DIR_2B), load_group("s5_seeds", RESULTS_DIR_2B)
-    top = sorted(reg.values(), key=lambda r: -r["best_val_acc"])[:TOP_K]
-    return {r["name"]: [r] + [extra[f"{r['name']}_s{s}"] for s in SEEDS[1:] if f"{r['name']}_s{s}" in extra]
-            for r in top}
-
-
-def best_2b():
-    # (name, runs over the seeds) of the recipe of step 5 with the best mean validation accuracy, None if unconfirmed.
-    done = {n: runs for n, runs in confirmed_s5().items() if len(runs) == len(SEEDS)}
-    if not done:
-        return None
-    best = max(done, key=lambda n: seed_mean(done[n]))
-    return best, done[best]
+    # {recipe: runs over the seeds} for the TOP_K best recipes of step 5.
+    top = stored("s5_reg", seed=SEEDS[0]).sort_values("val", ascending=False, kind="stable").network[:TOP_K]
+    return {n: stored("s5_reg", n) for n in top}
 
 # %% [markdown]
 # ### Step 1: learning rate and weight decay
@@ -1936,13 +1582,11 @@ def best_2b():
 # other hyperparameters as in 2A, for 70 epochs. The plot shows, for each learning rate, its best weight decay.
 
 # %%
-s1_runs = load_group("s1_lr_wd", RESULTS_DIR_2B)
-if s1_runs:
-    display(grid_table(s1_runs, "lr", "weight_decay"))
-    plot_curves(
-        {f"lr {r['config']['lr']:g}, wd {r['config']['weight_decay']:g}": r for r in best_per_value(s1_runs, "lr").values()},
-        "step 1: the best weight decay of each learning rate (seed 42)",
-    )
+s1 = stored("s1_lr_wd")
+if len(s1):
+    display(grid(s1, "lr", "weight_decay"))
+    plot_curves({f"lr {r['config']['lr']:g}, wd {r['config']['weight_decay']:g}": r for r in best_per(s1, "lr")},
+                "step 1: the best weight decay of each learning rate (seed 42)")
 
 # %% [markdown]
 # **The learning rate is what matters, and 2A's was too large.** Accuracy grows with the learning rate over the whole
@@ -1964,10 +1608,10 @@ if s1_runs:
 # with a cosine schedule with 3 warmup epochs.
 
 # %%
-s2_runs = load_group("s2_warmup", RESULTS_DIR_2B)
-if s2_runs:
-    display(grid_table(s2_runs, "schedule", "freeze_epochs"))
-    plot_curves({n: r for n, r in s2_runs.items() if r["config"]["schedule"] == "onecycle"},
+s2 = stored("s2_warmup")
+if len(s2):
+    display(grid(s2, "schedule", "freeze_epochs"))
+    plot_curves({r["name"]: r for r in s2[s2.schedule == "onecycle"].run},
                 "step 2: epochs with the backbone frozen, one-cycle schedule (seed 42)")
 
 # %% [markdown]
@@ -1987,14 +1631,12 @@ if s2_runs:
 # of lowest stages kept frozen during the whole training (0 = none, 1 = the stem, 2 = the stem and the first stage).
 
 # %%
-s3_runs = load_group("s3_proglr", RESULTS_DIR_2B)
-if s3_runs:
-    display(grid_table(s3_runs, "layer_decay", "freeze_stages"))
-    plot_curves(
-        {f"layer decay {r['config']['layer_decay']:g}, {r['config']['freeze_stages']} frozen": r
-         for r in best_per_value(s3_runs, "layer_decay").values()},
-        "step 3: the best number of frozen stages for each layer decay (seed 42)",
-    )
+s3 = stored("s3_proglr")
+if len(s3):
+    display(grid(s3, "layer_decay", "freeze_stages"))
+    plot_curves({f"layer decay {r['config']['layer_decay']:g}, {r['config']['freeze_stages']} frozen": r
+                 for r in best_per(s3, "layer_decay")},
+                "step 3: the best number of frozen stages for each layer decay (seed 42)")
 
 # %% [markdown]
 # **All the layers should learn at the same rate.** Accuracy falls steadily as the decay grows: 72.3% with no decay,
@@ -2015,14 +1657,14 @@ if s3_runs:
 # ICLR 2018) and **CutMix** ($\alpha$ = 0.5 and 1; Yun et al., ICCV 2019).
 
 # %%
-s4a_runs = load_group("s4_aug_spatial", RESULTS_DIR_2B)
-s4b_runs = load_group("s4_aug_mix", RESULTS_DIR_2B)
-if s4a_runs:
-    records = [{"minimum crop area": r["config"]["crop_scale"][0], "random erasing": r["config"]["random_erasing"],
-                "best validation": r["best_val_acc"]} for r in s4a_runs.values()]
-    display(pd.DataFrame(records).pivot(index="minimum crop area", columns="random erasing", values="best validation")
+s4a, s4b = stored("s4_aug_spatial"), stored("s4_aug_mix")
+if len(s4a):
+    crops = pd.DataFrame({"minimum crop area": [c[0] for c in s4a.crop_scale],
+                          "random erasing": s4a.random_erasing.to_numpy(), "val": s4a.val.to_numpy()})
+    display(crops.pivot(index="minimum crop area", columns="random erasing", values="val")
             .style.background_gradient(cmap="Blues", axis=None).format("{:.3f}"))
-if s4b_runs:
+if len(s4b):
+    s4b_runs = {r["name"]: r for r in s4b.run}
     display(config_table(s4b_runs, ["color_jitter", "mixup_alpha", "cutmix_alpha"]))
     plot_curves(s4b_runs, "step 4B: colour jitter, Mixup and CutMix (seed 42)")
 
@@ -2044,12 +1686,12 @@ if s4b_runs:
 # recipes are retrained with two more seeds**, and the one with the best mean validation accuracy is the result of 2B.
 
 # %%
-s5_runs = load_group("s5_reg", RESULTS_DIR_2B)
-if s5_runs:
-    display(grid_table(s5_runs, "label_smoothing", "dropout"))
-confirmed = confirmed_s5()
-if confirmed:
-    display(seed_summary(confirmed))
+s5 = stored("s5_reg", seed=SEEDS[0])
+if len(s5):
+    display(grid(s5, "label_smoothing", "dropout"))
+confirmed_2b = confirmed_s5()
+if confirmed_2b:
+    display(seed_summary(confirmed_2b))
 
 # %% [markdown]
 # **The recipe of 2B reaches 74.8% validation and 74.1% test accuracy.** The twelve combinations are within 1.8 points
@@ -2064,68 +1706,39 @@ if confirmed:
 # The best run (seed 42) of every step, against the baseline of 2A (150 epochs).
 
 # %%
-ladder_2b = {}
-baseline = list(load_group("finetune", RESULTS_DIR_2A).values())
-if baseline:
-    ladder_2b["2A baseline (150 epochs)"] = baseline[0]
-for name, group in [("1. learning rate x weight decay", "s1_lr_wd"), ("2. head warmup and schedule", "s2_warmup"),
-                    ("3. progressive learning rates", "s3_proglr"), ("4. augmentation", "s4_aug_mix"),
-                    ("5. classifier regularization", "s5_reg")]:
-    best = best_in_group(group)
-    if best is not None:
-        ladder_2b[name] = best
+steps_2b = {}
+baseline = stored("finetune")
+if len(baseline):
+    steps_2b["2A baseline (150 epochs)"] = baseline.run.iloc[0]
+for name, experiment in [("1. learning rate x weight decay", "s1_lr_wd"), ("2. head warmup and schedule", "s2_warmup"),
+                         ("3. progressive learning rates", "s3_proglr"), ("4. augmentation", "s4_aug_mix"),
+                         ("5. classifier regularization", "s5_reg")]:
+    t = stored(experiment, seed=SEEDS[0])
+    if len(t):
+        steps_2b[name] = best_run(t).run
 
-if ladder_2b:
-    names = list(ladder_2b)
+if steps_2b:
+    names = list(steps_2b)
     xs = np.arange(len(names))
     fig, ax = plt.subplots(figsize=(11, 4.4))
-    ax.plot(xs, [ladder_2b[n]["best_val_acc"] for n in names], "o-", color=COLORS[0], markersize=8, label="validation (best epoch)")
-    ax.plot(xs, [ladder_2b[n]["test_acc"] for n in names], "s--", color=COLORS[1], markersize=7, label="test")
+    ax.plot(xs, [steps_2b[n]["best_val_acc"] for n in names], "o-", color=COLORS[0], markersize=8, label="validation (best epoch)")
+    ax.plot(xs, [steps_2b[n]["test_acc"] for n in names], "s--", color=COLORS[1], markersize=7, label="test")
     for x_, n in zip(xs, names):
-        ax.annotate(f"{ladder_2b[n]['best_val_acc']:.3f}", (x_, ladder_2b[n]["best_val_acc"]), textcoords="offset points",
+        ax.annotate(f"{steps_2b[n]['best_val_acc']:.3f}", (x_, steps_2b[n]["best_val_acc"]), textcoords="offset points",
                     xytext=(0, 9), ha="center", fontsize=8)
     ax.set_xticks(xs, [n.replace(". ", ".\n", 1) for n in names], fontsize=8)
     ax.axhline(0.70, ls="--", c="gray", lw=1, label="target of about 70%")
     ax.set_ylabel("accuracy"); ax.legend(loc="lower right", fontsize=8)
     ax.set_title("fine-tuning: the best run of every step (seed 42)")
     plt.tight_layout(); plt.show()
-    display(config_table(ladder_2b, ["lr", "weight_decay", "schedule", "freeze_epochs", "layer_decay", "freeze_stages",
-                                     "crop_scale", "random_erasing", "color_jitter", "label_smoothing", "dropout"]))
+    display(config_table(steps_2b, ["lr", "weight_decay", "schedule", "freeze_epochs", "layer_decay", "freeze_stages",
+                                    "crop_scale", "random_erasing", "color_jitter", "label_smoothing", "dropout"]))
 
 # %% [markdown]
 # Steps 1, 4 and 5 are the ones that raise the accuracy: the smaller learning rate lifts the network to the level of 2A
 # in less than half of the epochs, and the following steps add about 3 points in total, mostly from step 4 (colour jitter).
 # Steps 2 and 3 do not change the result (the winner of step 3 is the one of step 2). Note that the baseline of 2A is
 # trained for 150 epochs and the other runs for 70, and that there is no run of 2A with 70 epochs.
-
-# %% [markdown]
-# ### Comparison with Part 1 and 2A
-#
-# Mean ± standard deviation over the three seeds: our final network of Part 1 trained from scratch (150 epochs), the
-# pretrained network with the recipe of Part 1 (2A, 150 epochs), and the tuned recipe of 2B (70 epochs). If the runs that
-# train the winner of 2B for 150 epochs (`final_long`) are stored, they are shown too.
-
-# %%
-final_groups = {}
-final_groups[f"{FINAL_NET}, from scratch (part 1, 150 epochs)"] = long_runs(FINAL_NET)
-final_groups["resnet18, recipe of part 1 (2A, 150 epochs)"] = baseline
-if best_2b() is not None:
-    final_groups["resnet18, tuned recipe (2B, 70 epochs)"] = best_2b()[1]
-final_long = load_group("final_long", RESULTS_DIR_2B)
-long_2b = [final_long[f"resnet18_2B_ep{LONG_EPOCHS}_s{s}"] for s in SEEDS if f"resnet18_2B_ep{LONG_EPOCHS}_s{s}" in final_long]
-if long_2b:
-    final_groups[f"resnet18, tuned recipe (2B, {LONG_EPOCHS} epochs)"] = long_2b
-final_groups = {k: v for k, v in final_groups.items() if v}
-
-if final_groups:
-    display(seed_summary(final_groups))
-    plot_curves({k: v[0] for k, v in final_groups.items()}, "from scratch vs. fine-tuning with two recipes (seed 42)")
-
-# %% [markdown]
-# **Tuning the recipe adds 1.7 points of test accuracy (2.9 on validation), and pretraining pays off at a short budget.**
-# The tuned recipe fine-tunes the pretrained network to 74.1% test accuracy in 70 epochs, 1.7 points above 2A and 9.4 points above what the network of
-# Part 1 reaches with the same 70 epochs (64.7%). With 150 epochs the network trained from scratch catches up (74.2%): the
-# pretrained features are an advantage mostly when the training budget is small.
 
 # %% [markdown]
 # ### Step 6: longer training and higher resolution
@@ -2137,18 +1750,15 @@ if final_groups:
 # than twice the spatial resolution for the fine details of an aircraft (Lin et al., ICCV 2015; Touvron et al., NeurIPS
 # 2019). We test the two factors on top of the winner of step 5 trained for 150 epochs, alone and combined (seed 42), and
 # confirm the best configuration with three seeds.
-#
-# The cells below show the stored runs of this step (groups `final_long`, `s6_highres` and `s6_final_seeds` of
-# `results/part2B`).
 
 # %%
-s6_runs = load_group("s6_highres", RESULTS_DIR_2B)
-base_150 = final_long.get(f"resnet18_2B_ep{LONG_EPOCHS}_s{SEEDS[0]}")
-if base_150 is None or len(s6_runs) < 3:
+s6_runs = {r["name"]: r for r in stored("s6_highres").run}
+base_150 = stored("final_long", seed=SEEDS[0])
+if not len(base_150) or len(s6_runs) < 3:
     print("the runs of step 6 are not stored yet (groups final_long and s6_highres of results/part2B)")
 else:
     s6_compare = {
-        "224 px, no erasing (baseline)": base_150,
+        "224 px, no erasing (baseline)": base_150.run.iloc[0],
         "224 px, erasing 0.25": s6_runs["s6a_224px_re0.25_ep150"],
         "320 px, no erasing": s6_runs["s6b_320px_re0_ep150"],
         "320 px, erasing 0.25": s6_runs["s6c_320px_re0.25_ep150"],
@@ -2156,9 +1766,33 @@ else:
     display(config_table(s6_compare, ["img_size", "random_erasing", "epochs"]))
     plot_curves(s6_compare, "step 6: resolution and random erasing at 150 epochs (seed 42)")
 
-    final_seeds = load_group("s6_final_seeds", RESULTS_DIR_2B)
-    s6_final = [final_seeds[f"resnet18_2B_best_s{s}"] for s in SEEDS if f"resnet18_2B_best_s{s}" in final_seeds]
-    if s6_final:
-        cfg = s6_final[0]["config"]
-        final_groups[f"resnet18, step 6 ({cfg['img_size']} px, erasing {cfg['random_erasing']:g}, 150 epochs)"] = s6_final
-        display(seed_summary(final_groups))
+# %% [markdown]
+# ### Comparison with Part 1 and 2A
+#
+# Mean ± standard deviation over the three seeds: our final network of Part 1 trained from scratch (150 epochs), the
+# pretrained network with the recipe of Part 1 (2A, 150 epochs), and the tuned recipe of 2B at 70 epochs, at 150 epochs,
+# and with the resolution and random erasing selected in step 6 (150 epochs).
+
+# %%
+best_2b = best_confirmed(confirmed_s5())
+s6_final = stored("s6_final_seeds")
+final_groups = {
+    f"{FINAL_NET}, from scratch (part 1, 150 epochs)": long_runs(FINAL_NET),
+    "resnet18, recipe of part 1 (2A, 150 epochs)": stored("finetune"),
+    "resnet18, tuned recipe (2B, 70 epochs)": best_2b[1] if best_2b else pd.DataFrame(),
+    f"resnet18, tuned recipe (2B, {LONG_EPOCHS} epochs)": stored("final_long"),
+}
+if len(s6_final):
+    cfg = s6_final.run.iloc[0]["config"]
+    final_groups[f"resnet18, step 6 ({cfg['img_size']} px, erasing {cfg['random_erasing']:g}, {LONG_EPOCHS} epochs)"] = s6_final
+final_groups = {k: t for k, t in final_groups.items() if len(t)}
+
+if final_groups:
+    display(seed_summary(final_groups))
+    plot_curves({k: t.run.iloc[0] for k, t in final_groups.items()}, "from scratch vs. fine-tuning (seed 42)")
+
+# %% [markdown]
+# **Tuning the recipe adds 1.7 points of test accuracy (2.9 on validation), and pretraining pays off at a short budget.**
+# The tuned recipe fine-tunes the pretrained network to 74.1% test accuracy in 70 epochs, 1.7 points above 2A and 9.4 points above what the network of
+# Part 1 reaches with the same 70 epochs (64.7%). With 150 epochs the network trained from scratch catches up (74.2%): the
+# pretrained features are an advantage mostly when the training budget is small.
