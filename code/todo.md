@@ -25,6 +25,14 @@
 
 # simplify
 
+- [ ] pulizia codice di `submission_clean`: elenco completo e stato in `code/code_review.md`
+  - [x] punto 2 (codice morto): `RECIPE` no-op, `verbose` di `fit`, `result_path`, variabile `kind`
+  - [ ] `grid` è sia una variabile (cella tuning) sia una funzione (2B): rinominare
+  - [ ] stato globale `_RUNS`/`global` -> `functools.cache` + `cache_clear()`; `_DATA` -> `@cache`
+  - [ ] `fetch_results` sovrascrive sempre i JSON locali (extractall) e scarica a ogni esecuzione
+  - [ ] import fuori posto (`functools.cache`), `import a, b, c`, lambda `same`, variabile `l`, `kind` inutilizzata, marker `# [run]`
+  - [ ] `best_lr()` restituisce un run, non un lr; `n_classes=100` hardcoded; `self.base._labels` è API privata
+
 - [ ] test runner
 - [ ] more function reuse
 - [ ] spiegazioni e motivazioni

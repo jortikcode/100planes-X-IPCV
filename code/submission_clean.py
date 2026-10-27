@@ -263,9 +263,6 @@ GRID = [
     ("res_3461", dict(S4, blocks=(3, 4, 6, 1), residual=True)),
 ]
 
-# The regularizers of the training recipe, at the values they keep during step 1 of its search (lr x weight decay)
-RECIPE = dict(weight_decay=5e-4, label_smoothing=0.1, dropout=0.2, random_erasing=0.25)
-
 # Recipe tuning (see its section): the TUNE_N best networks of the grid get the same search
 TUNE_N = 3
 TUNE_LRS = [0.1, 0.05]  # grid search: learning rate x weight decay (log-spaced)
@@ -600,7 +597,7 @@ def evaluate(model, split, data, cfg, return_preds=False):
     return out + (torch.cat(preds).tolist(),) if return_preds else out
 
 
-def fit(cfg, data, verbose=True):
+def fit(cfg, data):
     model = build_model(cfg, N_CLASSES).to(DEVICE)
     opt = make_optimizer(model, cfg)
     criterion = nn.CrossEntropyLoss(label_smoothing=cfg["label_smoothing"])
@@ -623,7 +620,7 @@ def fit(cfg, data, verbose=True):
         if va_acc > best_acc:
             best_acc, best_epoch = va_acc, epoch + 1
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-        if verbose and (epoch % 5 == 0 or epoch == cfg["epochs"] - 1):
+        if epoch % 5 == 0 or epoch == cfg["epochs"] - 1:
             print(f"  ep {epoch + 1:3d} | lr {lr:.4f} | train loss {tr_loss:.3f} acc {tr_acc:.3f} "
                   f"| val loss {va_loss:.3f} acc {va_acc:.3f} | {hist['seconds'][-1]:.1f}s")
 
@@ -651,10 +648,6 @@ def fit(cfg, data, verbose=True):
 SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual")
 
 
-def result_path(name, group, seed, results_dir=None):
-    return (results_dir or RESULTS_DIR) / group / f"{name}_seed{seed}.json"
-
-
 def run_experiment(name, group, results_dir=None, **overrides):
     # Trains one configuration, evaluates its best checkpoint on the test split and stores the run; a stored run with
     # the same configuration is loaded instead (unless RETRAIN).
@@ -662,7 +655,7 @@ def run_experiment(name, group, results_dir=None, **overrides):
     cfg = {**BASE, **overrides, "name": name, "group": group}
     if cfg.get("pretrained", False):  # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
         cfg = {k: v for k, v in cfg.items() if k not in SCRATCH_ONLY_KEYS}
-    out = result_path(name, group, cfg["seed"], results_dir)
+    out = (results_dir or RESULTS_DIR) / group / f'{name}_seed{cfg["seed"]}.json'
     if not RETRAIN and out.exists():
         run = json.loads(out.read_text())
         if run["config"] == json.loads(json.dumps(cfg)):  # same configuration (tuples stored as lists)
@@ -1187,7 +1180,7 @@ def final_network():
 # The final model, stated explicitly: res_3461 with the best configuration of its recipe search (cfg05), trained
 # for LONG_EPOCHS epochs. Its ablations each change exactly one component of this configuration.
 FINAL_NET = "res_3461"
-FINAL_CONFIG = {**dict(GRID)[FINAL_NET], **RECIPE, "lr": 0.05, "weight_decay": 5e-3, "label_smoothing": 0.2,
+FINAL_CONFIG = {**dict(GRID)[FINAL_NET], "lr": 0.05, "weight_decay": 5e-3, "label_smoothing": 0.2,
                 "dropout": 0.0, "random_erasing": 0.25, "crop_scale": (0.5, 1.0), "schedule": "onecycle",
                 "epochs": LONG_EPOCHS}
 if TRAIN:
@@ -1311,7 +1304,7 @@ for name, (kind, over) in ABLATIONS.items():
 # %%
 # [run]
 if TRAIN:
-    for name, (kind, over) in ABLATIONS.items():
+    for name, (_, over) in ABLATIONS.items():
         for seed in SEEDS:
             run_experiment(f"{name}_s{seed}", ABLATION_GROUP, **{**ABLATION_BASE, **over, "seed": seed})
 
