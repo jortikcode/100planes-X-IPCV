@@ -282,7 +282,7 @@ LONG_EPOCHS = 150
 #
 # ![data pipeline](attachment:data_pipeline.png)
 #
-# **Preprocessing** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>). We then resize the image to 224x224 *without* keeping the aspect ratio. Finally, as in VGG (Simonyan & Zisserman, 2015), we subtract the per-channel mean of the training split, and we also divide by the per-channel standard deviation, following the PyTorch convention.
+# **Preprocessing** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>). We then resize the image to 224x224 *without* keeping the aspect ratio. Finally, as in VGG (Simonyan & Zisserman, 2015), we subtract the per-channel mean of the training split, and we also divide by the per-channel standard deviation, following the PyTorch convention (<a href="https://docs.pytorch.org/vision/stable/models.html" target="_blank">TorchVision, Models and pre-trained weights</a> and <a href="https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html">torchvision.models.resnet18</a>).
 #
 # **Augmentation, on training batches only** (bottom row). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe.
 #
@@ -533,7 +533,7 @@ for name, over in LADDER + GRID:
     head = sum(p.numel() for p in m.head.parameters())
     rows.append(dict(run=name, params_M=count_params(m) / 1e6, head_share=head / count_params(m),
                      GFLOPs=count_gflops(m, cfg["img_size"]), convs=sum(isinstance(l, nn.Conv2d) for l in m.modules())))
-pd.DataFrame(rows).set_index("run").style.format({"params_M": "{:.2f}", "head_share": "{:.0%}", "GFLOPs": "{:.2f}"})
+pd.DataFrame(rows).set_index("run").style.format({"params_M": "{:.2f}", "head_share": "{:.2%}", "GFLOPs": "{:.2f}"})
 
 
 # %% [markdown]
@@ -555,8 +555,6 @@ def make_optimizer(model, cfg):
 
 def lr_at(epoch, cfg):
     if cfg.get("schedule", "cosine") == "onecycle":
-        # one-cycle (Smith & Topin, 2019), per epoch: cosine rise from lr/25 to lr over the first 30% of the
-        # epochs, then cosine decay to lr/1e4 (the defaults of torch.optim.lr_scheduler.OneCycleLR)
         up = max(round(0.3 * cfg["epochs"]), 1)
         low, high, end = cfg["lr"] / 25, cfg["lr"], cfg["lr"] / 1e4
         if epoch < up:
@@ -891,7 +889,7 @@ if len(stored("ladder")):
 # %% [markdown]
 # A single learning rate for every step would have penalized some of the networks: this is why every configuration is compared at its own best
 #
-# **At this point the target accuracy for this part** (~50%) is satisfied, but since with the use of augmentation and the forth stage the network was still improving we decided to go further and explore wheter **more depth, residual connections and a tuned training recipe** could benefit overall.
+# **At this point the target accuracy for this part** (~50%) is satisfied, but since with the use of augmentation and the fourth stage the network was still improving we decided to go further and explore wheter **more depth, residual connections and a tuned training recipe** could benefit overall.
 
 # %% [markdown]
 # ## 2. Depth and residual connections
