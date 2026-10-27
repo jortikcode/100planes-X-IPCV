@@ -13,6 +13,7 @@
 - [x] pulire le diagnostiche di `ty` in `submission_clean` (`uvx ty check code/submission_clean.py`: 0 diagnostiche)
 - [ ] best-model -> retrain/dl results/dl wights
   - [ ] caricare modello su cartella condivisa
+  - [ ] fixare/rimuovere table of contents rotto
 
 # to remove
 
