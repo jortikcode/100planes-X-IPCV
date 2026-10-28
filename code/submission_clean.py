@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.6
 #   kernelspec:
-#     display_name: Python 3 (ipykernel)
+#     display_name: ipcv_task2
 #     language: python
 #     name: python3
 # ---
@@ -1748,17 +1748,12 @@ else:
 # and with the resolution and random erasing selected in step 6 (150 epochs).
 
 # %%
-best_2b = best_confirmed(confirmed_s5())
-s6_final = stored("s6_final_seeds")
+# the final model of each part
 final_groups = {
-    f"{FINAL_NET}, from scratch (part 1, 150 epochs)": long_runs(FINAL_NET),
-    "resnet18, recipe of part 1 (2A, 150 epochs)": stored("finetune"),
-    "resnet18, tuned recipe (2B, 70 epochs)": best_2b[1] if best_2b else pd.DataFrame(),
-    f"resnet18, tuned recipe (2B, {LONG_EPOCHS} epochs)": stored("final_long"),
+    f"{FINAL_NET}, from scratch (part 1)": long_runs(FINAL_NET),
+    "resnet18, recipe of part 1 (2A)": stored("finetune"),
+    "resnet18, tuned recipe (2B)": stored("s6_final_seeds"),
 }
-if len(s6_final):
-    cfg = s6_final.run.iloc[0]["config"]
-    final_groups[f"resnet18, step 6 ({cfg['img_size']} px, erasing {cfg['random_erasing']:g}, {LONG_EPOCHS} epochs)"] = s6_final
 final_groups = {k: t for k, t in final_groups.items() if len(t)}
 
 if final_groups:
