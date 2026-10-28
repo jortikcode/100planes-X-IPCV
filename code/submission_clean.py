@@ -915,12 +915,12 @@ if grid_runs:
     convs = {n: 3 + 2 * sum(cast("tuple[int, ...]", dict(GRID)[n]["blocks"])) for n in grid_runs}
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
     for kind, kind_label, c in (("plain", "plain", COLORS[1]), ("res", "residual", COLORS[0])):
-        names = [n for n in grid_runs if n.startswith(kind + "_")]
-        if not names:
+        in_kind = [n for n in grid_runs if n.startswith(kind + "_")]
+        if not in_kind:
             continue
         for ax, key in zip(axes, ("val", "train")):
-            ax.errorbar([convs[n] for n in names], [grid_runs[n][key].mean() for n in names],
-                        yerr=[np.nan_to_num(grid_runs[n][key].std()) for n in names],
+            ax.errorbar([convs[n] for n in in_kind], [grid_runs[n][key].mean() for n in in_kind],
+                        yerr=[np.nan_to_num(grid_runs[n][key].std()) for n in in_kind],
                         fmt="o-", color=c, capsize=4, markersize=8, label=kind_label)
     for ax, t in zip(axes, ("best validation accuracy", "final training accuracy")):
         ax.set_xlabel("convolutional layers"); ax.set_ylabel(t); ax.set_xticks(sorted(set(convs.values())))
@@ -1025,10 +1025,10 @@ def best_tuned(name):
 # Best validation accuracy of every point of the grid (seed 42), one panel per network; the ring marks the best point.
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 353} id="neNY--9cQLJa" outputId="be6ede74-60b1-438b-eb75-41c46a95663d"
-names = finalists(TUNE_N) or []
-if names and len(stored("recipe")):
-    fig, axes = plt.subplots(1, len(names), figsize=(15, 4.2), sharey=True)
-    for ax, name in zip(axes, names):
+tuned = finalists(TUNE_N) or []
+if tuned and len(stored("recipe")):
+    fig, axes = plt.subplots(1, len(tuned), figsize=(15, 4.2), sharey=True)
+    for ax, name in zip(axes, tuned):
         grid = search_runs(name).set_index("variant").val
         points = []
         for lr, c in zip(TUNE_LRS, ("#9b9990", COLORS[0])):
@@ -1060,7 +1060,7 @@ if names and len(stored("recipe")):
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 754} id="0UkjEj6DQLJa" outputId="ce26e558-8779-42b3-9db8-beb361b5f4dd"
 search = stored("recipe", seed=SEEDS[0])
-search = search[search.variant.str.startswith("cfg") & search.network.isin(names)]
+search = search[search.variant.str.startswith("cfg") & search.network.isin(tuned)]
 if len(search):
     # one row per random configuration (its parameters are the same on every network), one column per network
     configs = search.drop_duplicates("variant").set_index("variant").sort_index()
@@ -1070,8 +1070,8 @@ if len(search):
                           "random erasing": configs.random_erasing.to_numpy(),
                           "minimum crop": [c[0] for c in configs.crop_scale],
                           "schedule": configs.schedule.fillna("cosine").to_numpy(),
-                          **{label(n): accuracy[n].to_numpy() for n in names}}).set_index("configuration")
-    nets = [label(n) for n in names]
+                          **{label(n): accuracy[n].to_numpy() for n in tuned}}).set_index("configuration")
+    nets = [label(n) for n in tuned]
     table["mean"] = table[nets].mean(axis=1)
     display(table.sort_values("mean", ascending=False).style.format({n: "{:.3f}" for n in nets + ["mean"]}))
 
@@ -1121,9 +1121,9 @@ if len(search):
 # The two best configurations of each network, mean ± standard deviation over three seeds.
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 755} id="wwg-HozpQLJb" outputId="d9904fa7-5afe-40a9-d874-f876706e0cd2"
-if names:
+if tuned:
     groups, best_per_net = {}, {}
-    for name in names:
+    for name in tuned:
         for variant, t in confirmed(name).items():
             if len(t) == len(SEEDS):
                 groups[f"{label(name)} | {label(variant)}"] = t
@@ -1131,7 +1131,7 @@ if names:
             best_per_net[name] = best_tuned(name)
     if groups:
         display(seed_summary(groups))
-    if len(best_per_net) == len(names):
+    if len(best_per_net) == len(tuned):
         ranked, selected = select({n: t for n, (_, t) in best_per_net.items()})
         print("configuration:", run_overrides(best_per_net[selected][1].run.iloc[0]))
         plot_curves({f"{label(n)} ({label(best_per_net[n][0])})": best_per_net[n][1].run.iloc[0]
@@ -1166,9 +1166,9 @@ def long_runs(name):
 
 def long_final():
     # {network: runs over the seeds} at LONG_EPOCHS, for the tuned networks; None until all are trained.
-    names = finalists(TUNE_N) or []
-    by_net = {n: long_runs(n) for n in names}
-    return by_net if names and all(len(t) == len(SEEDS) for t in by_net.values()) else None
+    nets = finalists(TUNE_N) or []
+    by_net = {n: long_runs(n) for n in nets}
+    return by_net if nets and all(len(t) == len(SEEDS) for t in by_net.values()) else None
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="eJj0cSoOQLJZ" outputId="28f103dc-8786-4326-e9ec-7d6b69800de6"
@@ -1191,9 +1191,9 @@ if TRAIN:
 # epochs; the curves compare the two budgets (seed 42).
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 755} id="fG8OmpbpQLJb" outputId="fa7b56cd-10bf-4316-8d20-9c0dae878b85"
-names = finalists(TUNE_N) or []
+tuned = finalists(TUNE_N) or []
 groups = {}
-for name in names:
+for name in tuned:
     if best_tuned(name):
         groups[f"{label(name)} | {BASE['epochs']} epochs"] = best_tuned(name)[1]
     if len(long_runs(name)):
@@ -1367,10 +1367,10 @@ else:
 # %%
 if ablation is not None:
     # the ablations discussed in the text: training collapse without BatchNorm, overfitting without the regularizers
-    names = ["no_batchnorm", "no_batchnorm_lr0.01", "no_augmentation", "no_weight_decay"]
+    ablated = ["no_batchnorm", "no_batchnorm_lr0.01", "no_augmentation", "no_weight_decay"]
     reference = long_runs(FINAL_NET).run.iloc[0]
-    fig, axes = plt.subplots(1, len(names), figsize=(4.6 * len(names), 3.4), sharey=True)
-    for ax, name in zip(axes, names):
+    fig, axes = plt.subplots(1, len(ablated), figsize=(4.6 * len(ablated), 3.4), sharey=True)
+    for ax, name in zip(axes, ablated):
         ablated = stored(ABLATION_GROUP, name, seed=SEEDS[0]).run
         for curve_name, run, color in (("full model", reference, COLORS[0]),
                                        (name, ablated.iloc[0] if len(ablated) else None, COLORS[1])):
@@ -1681,15 +1681,15 @@ for name, experiment in [("1. learning rate x weight decay", "s1_lr_wd"), ("2. h
         steps_2b[name] = best_run(t).run
 
 if steps_2b:
-    names = list(steps_2b)
-    xs = np.arange(len(names))
+    step_names = list(steps_2b)
+    xs = np.arange(len(step_names))
     fig, ax = plt.subplots(figsize=(11, 4.4))
-    ax.plot(xs, [steps_2b[n]["best_val_acc"] for n in names], "o-", color=COLORS[0], markersize=8, label="validation (best epoch)")
-    ax.plot(xs, [steps_2b[n]["test_acc"] for n in names], "s--", color=COLORS[1], markersize=7, label="test")
-    for x_, n in zip(xs, names):
+    ax.plot(xs, [steps_2b[n]["best_val_acc"] for n in step_names], "o-", color=COLORS[0], markersize=8, label="validation (best epoch)")
+    ax.plot(xs, [steps_2b[n]["test_acc"] for n in step_names], "s--", color=COLORS[1], markersize=7, label="test")
+    for x_, n in zip(xs, step_names):
         ax.annotate(f"{steps_2b[n]['best_val_acc']:.3f}", (x_, steps_2b[n]["best_val_acc"]), textcoords="offset points",
                     xytext=(0, 9), ha="center", fontsize=8)
-    ax.set_xticks(xs, [n.replace(". ", ".\n", 1) for n in names], fontsize=8)
+    ax.set_xticks(xs, [n.replace(". ", ".\n", 1) for n in step_names], fontsize=8)
     ax.axhline(0.70, ls="--", c="gray", lw=1, label="target of about 70%")
     ax.set_ylabel("accuracy"); ax.legend(loc="lower right", fontsize=8)
     ax.set_title("fine-tuning: the best run of every step (seed 42)")
@@ -1762,17 +1762,17 @@ if len(s6_final):
 final_groups = {k: t for k, t in final_groups.items() if len(t)}
 
 if final_groups:
-    names = list(final_groups)
-    xs = np.arange(len(names))
+    group_names = list(final_groups)
+    xs = np.arange(len(group_names))
     fig, ax = plt.subplots(figsize=(11, 4.6))
     for offset, key, name, color in ((-0.2, "val", "validation", COLORS[0]), (0.2, "test", "test", COLORS[1])):
-        means = [final_groups[n][key].mean() for n in names]
-        ax.bar(xs + offset, means, 0.38, yerr=[final_groups[n][key].std() for n in names], capsize=3, color=color,
+        means = [final_groups[n][key].mean() for n in group_names]
+        ax.bar(xs + offset, means, 0.38, yerr=[final_groups[n][key].std() for n in group_names], capsize=3, color=color,
                label=f"{name} (mean ± std over 3 seeds)")
         for x_, m in zip(xs + offset, means):
             ax.text(x_, m + 0.02, f"{100 * m:.1f}", ha="center", fontsize=8)
     ax.axhline(0.70, ls="--", c="gray", lw=1, label="target of about 70%")
-    ax.set_xticks(xs, [n.replace(" (", "\n(", 1) for n in names], fontsize=8)
+    ax.set_xticks(xs, [n.replace(" (", "\n(", 1) for n in group_names], fontsize=8)
     ax.set_ylim(0, 1.05); ax.set_ylabel("accuracy"); ax.legend(loc="upper left", ncol=3, fontsize=8)
     ax.set_title("from scratch vs. fine-tuning: the final models")
     plt.tight_layout(); plt.show()

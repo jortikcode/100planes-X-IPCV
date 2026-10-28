@@ -45,8 +45,9 @@ Falsi positivi di vulture: `benchmark` e `deterministic` (flag di `torch.backend
 
 - [x] **`grid` era sia una variabile sia una funzione.** La funzione 2B è ora `grid_table`; la variabile locale del
   ciclo di tuning (riga 1032) resta `grid`.
-- [ ] **`names`** è riassegnata in 6 punti (righe 923, 1033, 1205, 1385, 1699, 1780); le celle alle righe 1068 e 1129
-  dipendono dal valore della riga 1033.
+- [x] **`names` era riassegnata in 6 punti** con significati diversi. Ora il valore condiviso dalle celle del tuning e
+  del longer training è `tuned`; gli usi locali hanno nomi propri (`in_kind`, `nets`, `ablated`, `step_names`,
+  `group_names`). Nessuna cella dipende più da un `names` lasciato da un'altra.
 - [ ] **Altre variabili globali riusate**: `groups` (4 volte), `cfg`, `reference` (un run in una cella, un dict di
   override in un'altra), `best`, `selected`, `t`, `n`.
 - [ ] **`finalists()` può restituire `None`** e ogni chiamante fa `or []` (righe 1033, 1174, 1205).

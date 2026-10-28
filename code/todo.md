@@ -29,6 +29,7 @@
   - [x] punto 2 (codice morto): `RECIPE` no-op, `verbose` di `fit`, `result_path`, variabile `kind`
   - [x] "modello finale" in un solo modo: tolti `final_network()` e il controllo duplicato, check nella cella dei risultati
   - [x] `grid` è sia una variabile (cella tuning) sia una funzione (2B): funzione rinominata `grid_table`
+  - [x] `names` riassegnata in 6 punti: rinominata per significato (`tuned` e nomi locali)
   - [ ] stato globale `_RUNS`/`global` -> `functools.cache` + `cache_clear()`; `_DATA` -> `@cache`
   - [ ] `fetch_results` sovrascrive sempre i JSON locali (extractall) e scarica a ogni esecuzione
   - [ ] import fuori posto (`functools.cache`), `import a, b, c`, lambda `same`, variabile `l`, `kind` inutilizzata, marker `# [run]`
