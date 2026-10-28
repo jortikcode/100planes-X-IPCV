@@ -675,8 +675,7 @@ def run_experiment(name, group, results_dir=None, **overrides):
     out = (results_dir or RESULTS_DIR) / group / f'{name}_seed{cfg["seed"]}.json'
     if not RETRAIN and out.exists():
         run = json.loads(out.read_text())
-        # same configuration (tuples stored as lists; the runs of 2B, trained by the notebook part2B, do not store
-        # the key "pretrained")
+        # same configuration (tuples stored as lists; the stored runs of 2B do not have the key "pretrained")
         if run["config"] == {k: v for k, v in json.loads(json.dumps(cfg)).items()
                              if k != "pretrained" or "pretrained" in run["config"]}:
             return run
@@ -1738,8 +1737,8 @@ if steps_2b:
 # %%
 # [run]
 # The final model of 2B: the recipe of step 5 trained for LONG_EPOCHS epochs at 320x320 with random erasing. The keys
-# mixup_alpha, cutmix_alpha, layer_decay and freeze_stages are options of the notebook part2B that this recipe leaves
-# off; they are kept so that the configuration is the one of the stored runs.
+# mixup_alpha, cutmix_alpha, layer_decay and freeze_stages are switched off; they are kept so that the configuration
+# is the one of the stored runs.
 FINAL_2B = dict(pretrained=True, img_size=320, augment=True, crop_scale=(0.5, 1.0), random_erasing=0.25,
                 color_jitter=0.2, mixup_alpha=0.0, cutmix_alpha=0.0, dropout=0.4, freeze_epochs=10, freeze_stages=0,
                 epochs=LONG_EPOCHS, lr=0.01, layer_decay=1.0, weight_decay=5e-3, label_smoothing=0.2,
