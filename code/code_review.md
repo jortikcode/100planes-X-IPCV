@@ -33,9 +33,10 @@ Falsi positivi di vulture: `benchmark` e `deterministic` (flag di `torch.backend
 - [~] **`count_gflops`**: non è morta, la usa la tabella parametri/GFLOPs. Va solo notato che `run_experiment` non salva
   più `gflops` nel JSON (i run vecchi lo hanno, quelli nuovi no).
 - [~] **`final` (variabile)**: è usata nel `print` della stessa cella, quindi non è morta.
-- [ ] **Tre modi per dire "il modello finale"**: la costante `FINAL_NET`, la variabile `final` (cella del longer
-  training) e `final_network()` con `long_final()`. Esiste un controllo di coerenza (riga 1300). Decidere se tenere
-  il controllo o ridurre a un solo modo.
+- [x] **Tre modi per dire "il modello finale"**: `FINAL_NET`/`FINAL_CONFIG` restano l'unica fonte (training e
+  ablation). Rimossi `final_network()` e il controllo di coerenza dopo `make_ablations`; il confronto tra la scelta
+  della regola di selezione e `FINAL_NET`/`FINAL_CONFIG` (con WARNING) sta ora nella cella dei risultati del longer
+  training, accanto a `select(...)`.
 - [~] **Costanti e helper usati una volta sola**: `summary`, `simplicity`, `STEPS`/`cumulative`, `LR_SWEEP`,
   `TUNE_LRS`, `RETRAIN`, `RESULTS_ARCHIVE_ID`/`FETCH_RESULTS`/`fetch_results`. Sono configurazione o funzioni
   leggibili: non ne ho tolto nessuna.

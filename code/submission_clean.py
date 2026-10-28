@@ -1171,12 +1171,6 @@ def long_final():
     return by_net if names and all(len(t) == len(SEEDS) for t in by_net.values()) else None
 
 
-def final_network():
-    # The final model: the selection rule applied after the longer training (None until it is trained).
-    by_net = long_final()
-    return select(by_net, verbose=False)[1] if by_net else None
-
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="eJj0cSoOQLJZ" outputId="28f103dc-8786-4326-e9ec-7d6b69800de6"
 # [run]
 # The final model, stated explicitly: res_3461 with the best configuration of its recipe search (cfg05), trained
@@ -1211,6 +1205,9 @@ by_net = long_final()
 if by_net:
     ranked, final = select(by_net, f"{LONG_EPOCHS} epochs: ")
     print("final configuration:", run_overrides(by_net[final].run.iloc[0]))
+    expected = json.loads(json.dumps({k: v for k, v in {**BASE, **FINAL_CONFIG}.items() if k != "seed"}))
+    if final != FINAL_NET or run_overrides(by_net[final].run.iloc[0]) != expected:
+        print(f"WARNING: the selection rule picks {final}, not FINAL_NET / FINAL_CONFIG")
     curves = {}
     for n in ranked:
         curves[f"{label(n)} | {BASE['epochs']} epochs"] = best_tuned(n)[1].run.iloc[0]
@@ -1291,13 +1288,6 @@ def make_ablations(base):
 ABLATION_BASE = {**BASE, **FINAL_CONFIG}
 ABLATIONS = make_ablations(ABLATION_BASE)
 
-# check: the selection rule, applied to the stored longer runs, picks the same network and configuration
-selected = final_network()
-if selected is None:
-    print("the longer runs are not stored: FINAL_CONFIG is not checked against the selection rule")
-elif selected != FINAL_NET or run_overrides(long_runs(selected).run.iloc[0]) != json.loads(
-        json.dumps({k: v for k, v in ABLATION_BASE.items() if k != "seed"})):
-    print(f"WARNING: the selection rule picks {selected}, not FINAL_CONFIG")
 print(f"final model: {FINAL_NET}, {ABLATION_BASE['epochs']} epochs, lr {ABLATION_BASE['lr']:g}")
 for name, (kind, over) in ABLATIONS.items():
     print(f"{name:22s} {kind:13s} {over}")
