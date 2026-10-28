@@ -74,9 +74,11 @@
 # **How to run.** The notebook runs top to bottom, locally or on Colab. All the runs reported below are stored in a
 # shared Google Drive folder (a copy of the `results` directory), downloaded automatically with `gdown` as a single
 # archive. With `TRAIN = False` (the default) the notebook only loads the stored results and shows its tables and plots:
-# no dataset and no training are needed. With `TRAIN = True` the training cells (final model, ablation, Part 2A)
-# download the dataset and train the runs whose result does not exist yet; `RETRAIN = True` trains them again even if
-# it exists. The images are read and preprocessed on the fly, on the CPU. Locally, results are kept in the `results`
+# no dataset and no training are needed. With `TRAIN = True` the training cells (the final models of Part 1,
+# 2A and 2B, and with `TRAIN_ABLATION = True` the ablation) download the dataset and train the runs whose result does not
+# exist yet, for the seeds in `TRAIN_SEEDS`. With `RETRAIN = True` as well, they train the final models again even if
+# their result exists, writing the new runs to a separate folder (`results_retrained`, on Google Drive when the notebook
+# runs on Colab) so that the stored results are never overwritten; the last section of the notebook compares the two. The images are read and preprocessed on the fly, on the CPU. Locally, results are kept in the `results`
 # directory of the repository and the dataset in its `data` directory (git-ignored, created if missing); on Colab both
 # stay on the temporary disk of the session.
 #
@@ -89,6 +91,7 @@
 
 # %%
 import json
+import os
 import math
 import random
 import re
@@ -114,8 +117,10 @@ from tqdm.auto import tqdm
 IN_COLAB = "google.colab" in sys.modules
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-TRAIN = False  # True: run the training cells (final model, ablation, Part 2A)
-RETRAIN = False  # True: with TRAIN, retrain the runs whose JSON already exists too
+TRAIN = False  # True: run the training cells (final models of Part 1, 2A and 2B)
+TRAIN_ABLATION = False  # True: with TRAIN, also the ablation of Part 1 (36 runs)
+RETRAIN = False  # True: with TRAIN, train the runs again into RETRAINED_ROOT, even if they are stored
+TRAIN_SEEDS = [42, 43, 44]  # the seeds the training cells train ([42] for a quick check)
 print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if DEVICE.type == "cuda" else "")
       + f" | torch {torch.__version__}")
 
@@ -136,6 +141,15 @@ else:
 RESULTS_DIR = RESULTS_ROOT / "part1"
 RESULTS_DIR_2A = RESULTS_ROOT / "part2A"
 RESULTS_DIR_2B = RESULTS_ROOT / "part2B"
+
+# runs trained again with RETRAIN: never written over the stored ones; on Colab on Google Drive, so that they
+# survive the end of the session
+RETRAINED_ROOT = RESULTS_ROOT.parent / "results_retrained"
+if IN_COLAB and RETRAIN:
+    from google.colab import drive
+
+    drive.mount("/content/drive")
+    RETRAINED_ROOT = Path("/content/drive/MyDrive/ipcv_results_retrained")
 
 for d in (RESULTS_DIR, RESULTS_DIR_2A, RESULTS_DIR_2B, DATA_ROOT):
     d.mkdir(parents=True, exist_ok=True)
@@ -300,7 +314,7 @@ IMAGENET_MEAN, IMAGENET_STD = (
 )  # statistics the pretrained ResNet-18 expects
 
 
-NUM_WORKERS = 4 if IN_COLAB else 0   # DataLoader workers; 0 locally (notebook classes cannot be pickled by spawn)
+NUM_WORKERS = os.cpu_count() if IN_COLAB else 0  # DataLoader workers; 0 locally (notebook classes cannot be pickled by spawn)
 
 
 @cache
@@ -364,13 +378,16 @@ def get_data(img_size, imagenet_stats=False):
 
 
 def train_transform(data, cfg):
-    # Augmentation of the training images: random resized crop + flip (cfg["augment"]), random erasing.
+    # Augmentation of the training images: random resized crop + flip (cfg["augment"]), brightness and contrast
+    # jitter (cfg["color_jitter"], the final recipe of 2B), random erasing.
     steps = []
     if cfg["augment"]:
         steps += [
             T.RandomResizedCrop(cfg["img_size"], scale=tuple(cfg["crop_scale"]), ratio=(3 / 4, 4 / 3), antialias=True),
             T.RandomHorizontalFlip(),
         ]
+    if cfg.get("color_jitter", 0.0) > 0:
+        steps.append(T.ColorJitter(brightness=cfg["color_jitter"], contrast=cfg["color_jitter"]))
     steps += [T.ToTensor(), T.Normalize(data["mean"], data["std"])]
     if cfg["random_erasing"] > 0:
         steps.append(T.RandomErasing(p=cfg["random_erasing"], value=0))  # 0 is the mean of the normalized images
@@ -382,7 +399,7 @@ def batches(split, data, cfg, train):
     if train:
         split = split.with_transform(train_transform(data, cfg))
     loader = DataLoader(
-        split, batch_size=cfg["batch_size"] if train else 512, shuffle=train, drop_last=train, num_workers=NUM_WORKERS
+        split, batch_size=cfg["batch_size"] if train else 128, shuffle=train, drop_last=train, num_workers=NUM_WORKERS
     )
     for x, y in loader:
         yield x.to(DEVICE), y.to(DEVICE)
@@ -566,8 +583,16 @@ def lr_at(epoch, cfg):
     return cfg["lr"] * 0.5 * (1 + math.cos(math.pi * progress))
 
 
-def train_epoch(model, opt, criterion, data, cfg):
+def train_epoch(model, opt, criterion, data, cfg, epoch):
     model.train()
+    # the first cfg["freeze_epochs"] epochs (the final recipe of 2B) train only the new classifier of the pretrained
+    # network: the backbone is frozen, and its BatchNorm layers keep their ImageNet statistics
+    frozen = epoch < cfg.get("freeze_epochs", 0)
+    for name, module in model.named_children():
+        if name != "fc":
+            module.requires_grad_(not frozen)
+            if frozen:
+                module.eval()
     total_loss = torch.zeros((), device=DEVICE)
     correct = torch.zeros((), device=DEVICE)
     n = 0
@@ -611,7 +636,7 @@ def fit(cfg, data):
         lr = lr_at(epoch, cfg)
         for g in opt.param_groups:
             g["lr"] = lr
-        tr_loss, tr_acc = train_epoch(model, opt, criterion, data, cfg)
+        tr_loss, tr_acc = train_epoch(model, opt, criterion, data, cfg, epoch)
         if not math.isfinite(tr_loss):
             diverged = True
             print(f"  diverged at epoch {epoch + 1} (training loss {tr_loss})")
@@ -652,15 +677,20 @@ SCRATCH_ONLY_KEYS = ("stem", "channels", "blocks", "batchnorm", "gap", "residual
 
 def run_experiment(name, group, results_dir=None, **overrides):
     # Trains one configuration, evaluates its best checkpoint on the test split and stores the run; a stored run with
-    # the same configuration is loaded instead (unless RETRAIN).
+    # the same configuration is loaded instead. With RETRAIN the run is written to RETRAINED_ROOT, not over the
+    # stored one.
     global _RUNS
     cfg = {**BASE, **overrides, "name": name, "group": group}
     if cfg.get("pretrained", False):  # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
         cfg = {k: v for k, v in cfg.items() if k not in SCRATCH_ONLY_KEYS}
-    out = (results_dir or RESULTS_DIR) / group / f'{name}_seed{cfg["seed"]}.json'
-    if not RETRAIN and out.exists():
+    part = (results_dir or RESULTS_DIR).name
+    out = (RETRAINED_ROOT if RETRAIN else RESULTS_ROOT) / part / group / f'{name}_seed{cfg["seed"]}.json'
+    if out.exists():
         run = json.loads(out.read_text())
-        if run["config"] == json.loads(json.dumps(cfg)):  # same configuration (tuples stored as lists)
+        # same configuration (tuples stored as lists; the runs of 2B, trained by the notebook part2B, do not store
+        # the key "pretrained")
+        if run["config"] == {k: v for k, v in json.loads(json.dumps(cfg)).items()
+                             if k != "pretrained" or "pretrained" in run["config"]}:
             return run
         print(f"{group}/{name}: the configuration changed since the stored run, training")
 
@@ -1186,7 +1216,7 @@ FINAL_CONFIG = {**dict(GRID)[FINAL_NET], "lr": 0.05, "weight_decay": 5e-3, "labe
                 "dropout": 0.0, "random_erasing": 0.25, "crop_scale": (0.5, 1.0), "schedule": "onecycle",
                 "epochs": LONG_EPOCHS}
 if TRAIN:
-    for seed in SEEDS:
+    for seed in TRAIN_SEEDS:
         run_experiment(f"{FINAL_NET}_ep{LONG_EPOCHS}_s{seed}", "long", **{**FINAL_CONFIG, "seed": seed})
 
 
@@ -1305,9 +1335,9 @@ for name, (kind, over) in ABLATIONS.items():
 
 # %%
 # [run]
-if TRAIN:
+if TRAIN and TRAIN_ABLATION:
     for name, (_, over) in ABLATIONS.items():
-        for seed in SEEDS:
+        for seed in TRAIN_SEEDS:
             run_experiment(f"{name}_s{seed}", ABLATION_GROUP, **{**ABLATION_BASE, **over, "seed": seed})
 
 # %% [markdown]
@@ -1462,7 +1492,7 @@ if best is not None:
 # %%
 # [run]
 if TRAIN:
-    for seed in SEEDS:
+    for seed in TRAIN_SEEDS:
         run_experiment(f"resnet18_ft_s{seed}", "finetune", results_dir=RESULTS_DIR_2A, seed=seed, **FINETUNE)
 
 # %% [markdown]
@@ -1728,6 +1758,19 @@ if steps_2b:
 #
 
 # %%
+# [run]
+# The final model of 2B: the recipe of step 5 trained for LONG_EPOCHS epochs at 320x320 with random erasing. The keys
+# mixup_alpha, cutmix_alpha, layer_decay and freeze_stages are options of the notebook part2B that this recipe leaves
+# off; they are kept so that the configuration is the one of the stored runs.
+FINAL_2B = dict(pretrained=True, img_size=320, augment=True, crop_scale=(0.5, 1.0), random_erasing=0.25,
+                color_jitter=0.2, mixup_alpha=0.0, cutmix_alpha=0.0, dropout=0.4, freeze_epochs=10, freeze_stages=0,
+                epochs=LONG_EPOCHS, lr=0.01, layer_decay=1.0, weight_decay=5e-3, label_smoothing=0.2,
+                schedule="onecycle")
+if TRAIN:
+    for seed in TRAIN_SEEDS:
+        run_experiment(f"resnet18_2B_best_s{seed}", "s6_final_seeds", results_dir=RESULTS_DIR_2B, seed=seed, **FINAL_2B)
+
+# %%
 s6_runs = {r["name"]: r for r in stored("s6_highres").run}
 base_150 = stored("final_long", seed=SEEDS[0])
 if not len(base_150) or len(s6_runs) < 3:
@@ -1805,3 +1848,29 @@ if final_groups:
 # trained from scratch reaches in 150. With the same budget and resolution the advantage shrinks to a few points, and
 # the gap between the two parts comes as much from how the pretrained network is trained as from the pretraining
 # itself.
+
+# %% [markdown]
+# ## Retrained final models
+#
+# When the final models are trained again (`TRAIN = True`, `RETRAIN = True`), this table compares every retrained run
+# with the stored run of the same seed. The training code of this notebook reads the images on the CPU and trains in
+# float32, while the stored runs were trained with an equivalent GPU pipeline with mixed precision (and, for 2B, the
+# notebook `part2B`): the numbers should be similar, not identical.
+
+# %%
+FINAL_MODELS = [("Part 1: res_3461 from scratch", "part1", "long"), ("2A: ResNet-18, recipe of Part 1", "part2A", "finetune"),
+                ("2B: ResNet-18, final recipe", "part2B", "s6_final_seeds")]
+rows = []
+for model, part, group in FINAL_MODELS:
+    for path in sorted((RETRAINED_ROOT / part / group).glob("*.json")):
+        new, old = json.loads(path.read_text()), json.loads((RESULTS_ROOT / part / group / path.name).read_text())
+        rows.append({"model": model, "seed": new["seed"], "validation (stored)": old["best_val_acc"],
+                     "validation (retrained)": new["best_val_acc"], "test (stored)": old["test_acc"],
+                     "test (retrained)": new["test_acc"], "Δ test": new["test_acc"] - old["test_acc"],
+                     "minutes": new["minutes"]})
+if rows:
+    display(pd.DataFrame(rows).set_index(["model", "seed"]).style.format(
+        {"validation (stored)": "{:.3f}", "validation (retrained)": "{:.3f}", "test (stored)": "{:.3f}",
+         "test (retrained)": "{:.3f}", "Δ test": "{:+.3f}", "minutes": "{:.0f}"}))
+else:
+    print(f"no retrained run in {RETRAINED_ROOT} (TRAIN = True and RETRAIN = True train them)")
