@@ -1512,7 +1512,7 @@ else:
 # **Result.** The final recipe fine-tunes the pretrained ResNet-18 at 320x320 for 150 epochs and reaches **81.5% test accuracy**, well above our network trained from scratch and the recipe of 2A.
 
 # %%
-def grid(t, rows, cols):
+def grid_table(t, rows, cols):
     # Best validation accuracy of a grid of runs, one hyperparameter on the rows and one on the columns (the values of
     # each run's own configuration: in the table of all the runs, a key missing from some runs becomes a float).
     keys = pd.DataFrame({k: [r["config"][k] for r in t.run] for k in (rows, cols)}).assign(val=t.val.to_numpy())
@@ -1549,7 +1549,7 @@ def confirmed_s5():
 # %%
 s1 = stored("s1_lr_wd")
 if len(s1):
-    display(grid(s1, "lr", "weight_decay"))
+    display(grid_table(s1, "lr", "weight_decay"))
     plot_curves({f"lr {r['config']['lr']:g}, wd {r['config']['weight_decay']:g}": r for r in best_per(s1, "lr")},
                 "step 1: the best weight decay of each learning rate (seed 42)")
 
@@ -1575,7 +1575,7 @@ if len(s1):
 # %%
 s2 = stored("s2_warmup")
 if len(s2):
-    display(grid(s2, "schedule", "freeze_epochs"))
+    display(grid_table(s2, "schedule", "freeze_epochs"))
 
 # %% [markdown]
 # **Freezing the backbone and the schedule change little.** Apart from the worst combination (cosine schedule with 10
@@ -1595,7 +1595,7 @@ if len(s2):
 # %%
 s3 = stored("s3_proglr")
 if len(s3):
-    display(grid(s3, "layer_decay", "freeze_stages"))
+    display(grid_table(s3, "layer_decay", "freeze_stages"))
     plot_curves({f"layer decay {r['config']['layer_decay']:g}, {r['config']['freeze_stages']} frozen": r
                  for r in best_per(s3, "layer_decay")},
                 "step 3: the best number of frozen stages for each layer decay (seed 42)")
@@ -1650,7 +1650,7 @@ if len(s4b):
 # %%
 s5 = stored("s5_reg", seed=SEEDS[0])
 if len(s5):
-    display(grid(s5, "label_smoothing", "dropout"))
+    display(grid_table(s5, "label_smoothing", "dropout"))
 confirmed_2b = confirmed_s5()
 if confirmed_2b:
     display(seed_summary(confirmed_2b))

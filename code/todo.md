@@ -28,7 +28,7 @@
 - [ ] pulizia codice di `submission_clean`: elenco completo e stato in `code/code_review.md`
   - [x] punto 2 (codice morto): `RECIPE` no-op, `verbose` di `fit`, `result_path`, variabile `kind`
   - [x] "modello finale" in un solo modo: tolti `final_network()` e il controllo duplicato, check nella cella dei risultati
-  - [ ] `grid` è sia una variabile (cella tuning) sia una funzione (2B): rinominare
+  - [x] `grid` è sia una variabile (cella tuning) sia una funzione (2B): funzione rinominata `grid_table`
   - [ ] stato globale `_RUNS`/`global` -> `functools.cache` + `cache_clear()`; `_DATA` -> `@cache`
   - [ ] `fetch_results` sovrascrive sempre i JSON locali (extractall) e scarica a ogni esecuzione
   - [ ] import fuori posto (`functools.cache`), `import a, b, c`, lambda `same`, variabile `l`, `kind` inutilizzata, marker `# [run]`

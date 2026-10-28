@@ -43,9 +43,8 @@ Falsi positivi di vulture: `benchmark` e `deterministic` (flag di `torch.backend
 
 ## 3. Riferimenti fragili tra celle (stato globale implicito)
 
-- [ ] **`grid` è sia una variabile sia una funzione.** La cella del tuning (riga 1037) fa `grid = search_runs(name)...`
-  a livello di modulo, la cella 2B (riga 1530) definisce `def grid(t, rows, cols)`. Funziona solo perché la `def` viene
-  dopo: rilanciando la cella del tuning dopo la definizione, `grid(s1, ...)` fallisce ("Series not callable").
+- [x] **`grid` era sia una variabile sia una funzione.** La funzione 2B è ora `grid_table`; la variabile locale del
+  ciclo di tuning (riga 1032) resta `grid`.
 - [ ] **`names`** è riassegnata in 6 punti (righe 923, 1033, 1205, 1385, 1699, 1780); le celle alle righe 1068 e 1129
   dipendono dal valore della riga 1033.
 - [ ] **Altre variabili globali riusate**: `groups` (4 volte), `cfg`, `reference` (un run in una cella, un dict di
