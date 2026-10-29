@@ -120,6 +120,7 @@ AMP_DTYPE = (
 )
 
 RETRAIN = False  # True: retrain runs even if their JSON already exists
+TRAIN_FINAL_ONLY = False  # True: skip intermediate Part 1 training (ladder, grid, tuning, ablation) and train only the final model
 SHOW_SUMMARY = True  # print the model summary when a run starts with a different architecture than the last one
 print(
     f"device: {DEVICE}"
@@ -999,7 +1000,8 @@ def run_experiment(name, group, note="", results_dir=None, **overrides):
     ):  # the architecture keys of AircraftNet do not describe the pretrained ResNet-18
         cfg = {k: v for k, v in cfg.items() if k not in SCRATCH_ONLY_KEYS}
     out = result_path(name, group, cfg["seed"], results_dir)
-    if out.exists() and not RETRAIN:
+    force_final = TRAIN_FINAL_ONLY and group == "long" and name == f"res_3461_ep{LONG_EPOCHS}_s42"
+    if out.exists() and not RETRAIN and not force_final:
         run = json.loads(out.read_text())
         if run["config"] == json.loads(
             json.dumps(cfg)
@@ -1263,8 +1265,9 @@ def long_runs(name):
 
 # %%
 # [run]
-for name, over in LADDER:
-    run_sweep(name, "ladder", **over)
+if not TRAIN_FINAL_ONLY:
+    for name, over in LADDER:
+        run_sweep(name, "ladder", **over)
 
 # %% [markdown]
 # ## Depth x residual
@@ -1290,8 +1293,9 @@ for name, over in LADDER:
 
 # %%
 # [run]
-for name, over in GRID:
-    run_sweep(name, "depth_residual", **over)
+if not TRAIN_FINAL_ONLY:
+    for name, over in GRID:
+        run_sweep(name, "depth_residual", **over)
 
 # %% [markdown]
 # ### Seeds
@@ -1302,8 +1306,9 @@ for name, over in GRID:
 
 # %%
 # [run]
-for name, over in GRID:
-    run_seeds(name, "depth_residual", note="seeds", **over)
+if not TRAIN_FINAL_ONLY:
+    for name, over in GRID:
+        run_seeds(name, "depth_residual", note="seeds", **over)
 
 # %% [markdown]
 # ## The training recipe
@@ -1361,52 +1366,55 @@ for name, over in GRID:
 
 # %%
 # [run]
-names = finalists(TUNE_N)
-if names is None:
-    print("train the whole grid with all its seeds first")
-else:
-    print("networks:", names)
-    # 1. grid search: learning rate x weight decay, the other parameters as in RECIPE
-    for name in names:
-        for lr in TUNE_LRS:
-            for wd in TUNE_WDS:
-                run_experiment(
-                    f"{name}_lr{lr:g}_wd{wd:g}",
-                    "tune_grid",
-                    note="tuning: lr x wd",
-                    **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd},
-                )
-        lr, wd = best_grid_point(name)
-        print(f"==> {name}: best lr {lr:g}, weight decay {wd:g}\n")
+if not TRAIN_FINAL_ONLY:
+    names = finalists(TUNE_N)
+    if names is None:
+        print("train the whole grid with all its seeds first")
+    else:
+        print("networks:", names)
+        # 1. grid search: learning rate x weight decay, the other parameters as in RECIPE
+        for name in names:
+            for lr in TUNE_LRS:
+                for wd in TUNE_WDS:
+                    run_experiment(
+                        f"{name}_lr{lr:g}_wd{wd:g}",
+                        "tune_grid",
+                        note="tuning: lr x wd",
+                        **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd},
+                    )
+            lr, wd = best_grid_point(name)
+            print(f"==> {name}: best lr {lr:g}, weight decay {wd:g}\n")
 
 # %%
 # [run]
 # 2. random search on the other parameters, at the best lr and weight decay of each network
-configs = random_configs()
-for i, c in enumerate(configs):
-    print(f"cfg{i:02d}  {c}")
-for name in finalists(TUNE_N):
-    lr, wd = best_grid_point(name)
+if not TRAIN_FINAL_ONLY:
+    configs = random_configs()
     for i, c in enumerate(configs):
-        run_experiment(
-            f"{name}_cfg{i:02d}",
-            "tune_random",
-            note="tuning: random search",
-            **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd, **c},
-        )
+        print(f"cfg{i:02d}  {c}")
+    for name in finalists(TUNE_N) or []:
+        lr, wd = best_grid_point(name)
+        for i, c in enumerate(configs):
+            run_experiment(
+                f"{name}_cfg{i:02d}",
+                "tune_random",
+                note="tuning: random search",
+                **{**dict(GRID)[name], **RECIPE, "lr": lr, "weight_decay": wd, **c},
+            )
 
 # %%
 # [run]
 # 3. confirmation: the TOP_K best configurations of each network, with the other seeds
-for name in finalists(TUNE_N):
-    for run in top_configs(name):
-        for seed in SEEDS[1:]:
-            run_experiment(
-                f"{run['name']}_s{seed}",
-                "tune_seeds",
-                note="tuning: seeds",
-                **{**run_overrides(run), "seed": seed},
-            )
+if not TRAIN_FINAL_ONLY:
+    for name in finalists(TUNE_N) or []:
+        for run in top_configs(name):
+            for seed in SEEDS[1:]:
+                run_experiment(
+                    f"{run['name']}_s{seed}",
+                    "tune_seeds",
+                    note="tuning: seeds",
+                    **{**run_overrides(run), "seed": seed},
+                )
 
 # %% [markdown]
 # ## Longer training
@@ -1423,7 +1431,10 @@ for name in finalists(TUNE_N):
 
 # %%
 # [run]
-for name in finalists(TUNE_N):
+final_candidates = (
+    ["res_3461"] if TRAIN_FINAL_ONLY else (finalists(TUNE_N) or ["res_3461"])
+)
+for name in final_candidates:
     best = best_tuned(name)
     if best is None:
         print(f"{name}: train the recipe search with all its seeds first")
@@ -1431,6 +1442,8 @@ for name in finalists(TUNE_N):
     cfg_name, runs = best
     print(f"{name}: {cfg_name}, {LONG_EPOCHS} epochs")
     for seed in SEEDS:
+        if TRAIN_FINAL_ONLY and seed != 42:
+            continue
         run_experiment(
             f"{name}_ep{LONG_EPOCHS}_s{seed}",
             "long",
@@ -1917,6 +1930,45 @@ if names and len(long_final) == len(names):
     )
 
 # %% [markdown]
+# ### Save weights of the best Part 1 model (seed 42)
+
+# %%
+final = globals().get("final", "res_3461")
+final_config = {
+    "img_size": 224,
+    "augment": True,
+    "crop_scale": [0.5, 1.0],
+    "stem": [32, 32, 64],
+    "channels": [64, 128, 256, 512],
+    "blocks": [3, 4, 6, 1],
+    "batchnorm": True,
+    "gap": True,
+    "residual": True,
+    "dropout": 0.0,
+    "epochs": 150,
+    "batch_size": 64,
+    "lr": 0.05,
+    "momentum": 0.9,
+    "weight_decay": 0.005,
+    "label_smoothing": 0.2,
+    "random_erasing": 0.25,
+    "warmup_epochs": 3,
+    "schedule": "onecycle",
+    "seed": 42,
+}
+
+weights_path_p1 = RESULTS_DIR / f"{final}_best_s42.pt"
+if not weights_path_p1.exists():
+    print(f"Training best Part 1 model ({final}, seed {final_config['seed']}) to save weights...")
+    fix_random(final_config["seed"])
+    model_p1, _, _, _ = fit(final_config, get_data(final_config["img_size"]))
+    weights_path_p1.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model_p1.state_dict(), weights_path_p1)
+    print(f"Weights saved -> {weights_path_p1}")
+else:
+    print(f"Weights ready -> {weights_path_p1}")
+
+# %% [markdown]
 # ## Ablation of the final model
 #
 # The ladder and the depth x residual experiment *added* components one at a time to a plain network. To prove that every
@@ -2001,14 +2053,15 @@ else:
 
 # %%
 # [run]
-for name, (kind, over) in ABLATIONS.items():
-    for seed in SEEDS:
-        run_experiment(
-            f"{name}_s{seed}",
-            ABLATION_GROUP,
-            note=f"ablation: {name}",
-            **{**ABLATION_BASE, **over, "seed": seed},
-        )
+if not TRAIN_FINAL_ONLY:
+    for name, (kind, over) in ABLATIONS.items():
+        for seed in SEEDS:
+            run_experiment(
+                f"{name}_s{seed}",
+                ABLATION_GROUP,
+                note=f"ablation: {name}",
+                **{**ABLATION_BASE, **over, "seed": seed},
+            )
 
 # %% [markdown]
 # ### Results of the ablation

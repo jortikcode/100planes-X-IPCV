@@ -1308,3 +1308,21 @@ if s6_seeds_runs:
     for label, runs in all_final_groups.items():
         print(f"{label:55s} val {seed_mean(runs):.3f} ± {seed_std(runs):.3f} | "
               f"test {seed_mean(runs, 'test_acc'):.3f} ± {seed_std(runs, 'test_acc'):.3f}")
+
+# %% [markdown]
+# ### Save weights of the best Part 2B model (seed 42)
+
+# %%
+weights_path_2b = RESULTS_DIR / "resnet18_2B_best_s42.pt"
+if not weights_path_2b.exists():
+    best_s42_run = load_group("s6_final_seeds").get("resnet18_2B_best_s42")
+    if best_s42_run is not None:
+        cfg_2b = dict(best_s42_run["config"])
+        print(f"Training best Part 2B model ({best_s42_run['name']}) to save weights...")
+        fix_random(cfg_2b["seed"])
+        model_2b, _, _, _ = fit(cfg_2b, get_data(cfg_2b["img_size"]))
+        weights_path_2b.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model_2b.state_dict(), weights_path_2b)
+        print(f"Weights saved -> {weights_path_2b}")
+else:
+    print(f"Weights ready -> {weights_path_2b}")
