@@ -89,9 +89,11 @@
 # - With `INFERENCE = True` the final models of Part 1 and 2B are evaluated on the test split: with `TRAIN = False`
 # their stored weights (part of the results archive), with `TRAIN = True` the best of the seeds trained in the session.
 #
+# **We suggest to keep all the flags set to `False` (default)**, in order to avoid really long runs, since all of the results are downloaded from our training sessions. Optionally, `INFERENCE` can be set to `True` to see the runtime performance of the best models we obtained for Part 1 and Part 2B.   
+#
 # Locally, results are kept in the `results` directory of the repository and the dataset in its `data` directory, on Colab both stay on the temporary disk of the session.
 #
-# **Note.** The stored results were produced with an equivalent pipeline that kept the dataset on the GPU and computed the augmentation on the GPU with mixed precision. The training code of this notebook is the same algorithm with standard torchvision transforms in float32, so retraining gives similar, not identical, numbers.
+# **Note.** The stored results were produced with an equivalent pipeline that kept the dataset on the GPU and computed the augmentation on the GPU with mixed precision. For the sake of simplicity the training code of this notebook is the same algorithm with standard torchvision transforms in float32, so retraining gives similar, yet not identical, numbers.
 
 # %%
 # %pip install -q gdown
@@ -1499,18 +1501,15 @@ if ablation is not None:
 # %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
 #
-# We now fine-tune the ResNet-18 of PyTorch, pretrained on ImageNet-1K (V1 weights), with the same data, splits,
+# We now fine-tune the ResNet-18 of PyTorch, pretrained, with the same data, splits,
 # training loop and evaluation as Part 1. Only two things change:
 #
-# 1. **the network**: the pretrained ResNet-18, whose 1000-way ImageNet classifier is replaced by a new, randomly
-#    initialized 100-way linear layer;
-# 2. **the input normalization**: the pretrained filters expect images normalized with the ImageNet mean and standard
-#    deviation, not with those of our training split.
+# 1. **the network**: the pretrained ResNet-18, whose 1000-way ImageNet classifier is replaced by a new, randomly initialized 100-way linear layer;
+# 2. **the input normalization**: the pretrained filters expect images normalized with the ImageNet mean and standard deviation, not with those of our training split.
 #
 # ## 2A: the hyperparameters of Part 1
 #
-# As the assignment requires, we first fine-tune the whole network with exactly the training recipe of our final
-# model of Part 1, without tuning anything:
+# As the assignment requires, we first fine-tune the whole network with exactly the training recipe of our final model of Part 1, without tuning anything:
 #
 # | hyperparameter | value |
 # |---|---|
@@ -1522,8 +1521,7 @@ if ablation is not None:
 # | dropout | 0 |
 # | augmentation | random resized crop (at least 50% of the image), horizontal flip, random erasing (p = 0.25) |
 #
-# This recipe, and in particular its learning rate, was tuned for a network trained from scratch. 2A shows how it
-# behaves on pretrained weights, and is the starting point of 2B. As in Part 1, we train three seeds (42, 43, 44).
+# This recipe, and in particular its learning rate, was tuned for a network trained from scratch. 2A shows how it behaves on pretrained weights. As in Part 1, we train three seeds (42, 43, 44).
 #
 
 # %%
@@ -1555,7 +1553,7 @@ if TRAIN:
 # ### Results of 2A
 #
 # Mean ± standard deviation over three seeds, compared with the best model of Part 1 trained from scratch with the same
-# hyperparameters (`res_3461`, 150 epochs). The curves are the seed-42 runs.
+# hyperparameters. The curves are the seed-42 runs.
 
 # %%
 finetune = stored("finetune")
@@ -1584,29 +1582,32 @@ else:
 
 
 # %% [markdown]
-# **Part 1's recipe does not suit a pretrained network.** The pretrained ResNet-18 starts much faster than the network trained from scratch, but its accuracy collapses as the one-cycle schedule raises the learning rate towards 0.05, long before the peak. Even its *training* accuracy falls: the large updates overwrite the ImageNet features that made the start fast. The network recovers only once the learning rate decays, and ends below the network trained from scratch, so with these hyperparameters the pretraining is largely wasted. 2B adapts the recipe to fine-tuning, starting from a much lower learning rate.
+# **Part 1's recipe does not suit a pretrained network.** 
+#
+# - The pretrained ResNet-18 starts much faster than the network trained from scratch, but its accuracy collapses as the one-cycle schedule raises the learning rate towards 0.05, long before the peak. 
+#
+# - Even its training accuracy falls: the large updates overwrite the ImageNet features that made the start fast. 
+#
+# - The network recovers only once the learning rate decays, and ends below the network trained from scratch. 
+#
+# 2B adapts the recipe to fine-tuning, starting from a much lower learning rate.
 #
 
 # %% [markdown]
 # ## 2B: adapting the recipe to fine-tuning
 #
-# 2A shows that the recipe of Part 1 is not suited to a pretrained network: its learning rate overwrites the ImageNet
-# features. In 2B we adapt the recipe **one aspect at a time**, each step starting from the best configuration of the
-# previous one, so that every change in accuracy has a single cause:
+# 2A shows that the recipe of Part 1 is not suited to a pretrained network: its learning rate overwrites the ImageNet features. In 2B we adapt the recipe one aspect at a time, each step starting from the best configuration of the previous one, so that every change in accuracy has a single cause:
 #
-# 1. **Learning rate and weight decay.** Smaller updates, so that the pretrained features are refined instead of erased.
-# 2. **Frozen warmup and schedule.** The new classifier is trained first, with the backbone frozen, before fine-tuning
-#    everything.
+# 1. **Learning rate and weight decay.** We test smaller learning rates to not disrupt the pretrained weights.
+# 2. **Frozen warmup and schedule.** The new classifier is trained first, with the backbone frozen, before fine-tuning everything.
 # 3. **Progressive learning rates.** The early, generic layers learn more slowly than the late ones, or stay frozen.
-# 4. **Data augmentation.** Stronger augmentation, now that the network fits the training set quickly.
-# 5. **Classifier regularization.** Label smoothing and dropout, re-tuned for the new recipe; the two best recipes are
-#    confirmed with three seeds.
-# 6. **Longer training and resolution.** The winner is trained for 150 epochs, with random erasing and with larger
-#    images, and the best configuration is confirmed with three seeds.
+# 4. **Data augmentation.** Stronger augmentation.
+# 5. **Classifier regularization.** Label smoothing and dropout, re-tuned for the new recipe. 
+# 6. **Longer training and resolution.** The winner is trained for 150 epochs, with random erasing and with larger images, and the best configuration is confirmed with three seeds.
 #
 # Steps 1–5 use one seed and 70 epochs, as the exploration of Part 1. Step 6 uses 150 epochs. All the choices are made on the validation split. 
 #
-# **Result.** The final recipe fine-tunes the pretrained ResNet-18 at 320x320 for 150 epochs and reaches **81.5% test accuracy**, well above our network trained from scratch and the recipe of 2A.
+# Results: The final recipe fine-tunes the pretrained ResNet-18 at 320x320 for 150 epochs and reaches **81.5% test accuracy**, well above our network trained from scratch and the recipe of 2A.
 
 # %%
 def grid_table(t, rows, cols):
@@ -1652,10 +1653,10 @@ if len(s1):
                 "step 1: the best weight decay of each learning rate (seed 42)")
 
 # %% [markdown]
-# **The learning rate is what matters, and 2A's was too large.** 
+# We found out that the learning rate is what matters and the one from the step 2A was probably too large.
 #
-# Accuracy grows with the learning rate over the whole range. At the smallest values the network does not even fit its training set. Weight decay has a smaller effect, and
-# not the expected one: the *largest* value, 5e-3, is the best at every learning rate, so the pretrained features are not erased by the decay. What erased them in 2A was the higher learning rate. 
+# - Lowering the learning rate from $0.05$ to $0.01$ is more than enough: lower values just make the validation worse.
+# - Weight decay has a smaller effect, and not the expected one: the largest value, 5e-3, is the best at every learning rate, so the pretrained features are not erased by the decay. What erased them in 2A was the higher learning rate. 
 #
 # With 70 epochs the best run (**71.7%**) already matches 2A trained for 150. The best learning rate is the largest of the grid: the optimum may lie between 0.01 and 0.05, which we do not explore. We keep **learning rate 0.01 and weight decay 5e-3**.
 #
@@ -1664,10 +1665,9 @@ if len(s1):
 # ### Step 2: frozen warmup of the classifier and schedule
 #
 # At the first epoch the 100-way classifier is random, while the backbone holds good features: updating everything at
-# once sends large random gradients into the backbone and distorts its features (Kumar et al., *Fine-Tuning can Distort
-# Pretrained Features*, ICLR 2022). Their remedy, **linear probing then fine-tuning**, first trains the classifier with the
-# backbone frozen, then unfreezes everything. We freeze the backbone for the first 0, 3, 5 or 10 epochs (its BatchNorm
-# layers stay in evaluation mode, so that their ImageNet statistics are not altered), and compare the one-cycle schedule
+# once sends large random gradients into the backbone and distorts its features (Kumar et al., *Fine-Tuning can Distort Pretrained Features*, ICLR 2022). The remedy suggested in this paper is **linear probing then fine-tuning**, which first trains the classifier with the backbone frozen, then unfreezes everything. 
+#
+# We freeze the backbone for the first 0, 3, 5 or 10 epochs (its BatchNorm layers stay in evaluation mode, so that their ImageNet statistics are not altered), and compare the one-cycle schedule
 # with a cosine schedule with 3 warmup epochs.
 
 # %%
@@ -1676,19 +1676,13 @@ if len(s2):
     display(grid_table(s2, "schedule", "freeze_epochs"))
 
 # %% [markdown]
-# **Freezing the backbone and the schedule change little.** Apart from the worst combination (cosine schedule with 10
-# frozen epochs), all the runs are within about one point, a difference comparable to the run-to-run noise of 2A. The
-# best run freezes the backbone for 10 epochs with the one-cycle schedule (**72.3%**), slightly above no freezing: we
-# keep it, but the evidence for a warmup of the classifier is weak.
+# Freezing the backbone and the schedule change little. 
+# Apart from the worst combination (cosine schedule with 10 frozen epochs), all the runs are within about one point, a difference comparable to the run-to-run noise of 2A. The best run freezes the backbone for 10 epochs with the one-cycle schedule (**72.3%**), slightly above no freezing: we keep it, but the evidence for a warmup of the classifier is weak.
 
 # %% [markdown]
 # ### Step 3: progressive learning rates and frozen stages
 #
-# The first layers of a convolutional network detect edges and textures that transfer across domains, the last ones
-# detect parts of the object (Yosinski et al., NeurIPS 2014). **Discriminative fine-tuning** gives smaller learning rates
-# to the earlier stages (Howard & Ruder, ACL 2018): the stage $s$ of the six of the network (stem, the four residual
-# stages, classifier) learns at $\text{lr} \cdot \gamma^{5-s}$. We cross $\gamma \in \{1, 0.7, 0.5, 0.3\}$ with the number
-# of lowest stages kept frozen during the whole training (0 = none, 1 = the stem, 2 = the stem and the first stage).
+# The first layers of a convolutional network detect edges and textures that transfer across domains, the last ones detect parts of the object (Yosinski et al., NeurIPS 2014). Discriminative fine-tuning gives smaller learning rates to the earlier stages (Howard & Ruder, ACL 2018): the stage $s$ of the six of the network (stem, the four residual stages, classifier) learns at $\text{lr} \cdot \gamma^{5-s}$. We cross $\gamma \in \{1, 0.7, 0.5, 0.3\}$ with the number of lowest stages kept frozen during the whole training (0 = none, 1 = the stem, 2 = the stem and the first stage).
 
 # %%
 s3 = stored("s3_proglr")
@@ -1699,24 +1693,21 @@ if len(s3):
                 "step 3: the best number of frozen stages for each layer decay (seed 42)")
 
 # %% [markdown]
-# **All the layers should learn at the same rate.** Validation accuracy falls steadily as the decay grows, and so does
-# the training accuracy; freezing the lowest stages does not help either. Lowering the learning rate of the early layers
-# has the same effect as lowering the learning rate of the whole network in step 1: the network underfits. **Aircraft
-# photographs are different enough from ImageNet that the early filters need to adapt as well**. The best run is the one
-# without decay or frozen stages (**72.3%** validation accuracy, the result of step 2): we keep a single learning rate
-# and no frozen stage, so this step does not change the recipe.
+# **All the layers should learn at the same rate.** Validation accuracy falls steadily as the decay grows, and so does the training accuracy. Freezing the lowest stages does not help either. Lowering the learning rate of the early layers has the same effect as lowering the learning rate of the whole network in step 1: the network underfits. 
 #
+# We suspect that aircraft photographs are different enough from ImageNet ones, and so the early filters need to adapt as well. 
+# The best run is the one without decay or frozen stages (**72.3%** validation accuracy, the result of step 2): we keep a single learning rate and no frozen stage, so this step does not change the recipe.
 
 # %% [markdown]
 # ### Step 4: data augmentation
 #
 # With about 33 images per class, a network that keeps its pretrained features fits the training set quickly. In Part 1,
 # stronger augmentation was left out because it makes optimization harder from random weights. 
+# We split this test:
 #
-# **4A** crosses the minimum area of the random crop (50%, 35%, 25% of the image, forcing the network to recognize parts at several scales) with the probability of random erasing (0, 0.25, 0.5; Zhong et al., AAAI 2020). 
+# - 4A crosses the minimum area of the random crop (50%, 35%, 25% of the image, forcing the network to recognize parts at several scales) with the probability of random erasing (0, 0.25, 0.5). 
 #
-# **4B**, on top of the best 4A, tests brightness and contrast jitter (0.2), **Mixup** ($\alpha$ = 0.2; Zhang et al.,
-# ICLR 2018) and **CutMix** ($\alpha$ = 0.5 and 1; Yun et al., ICCV 2019).
+# - 4B, on top of the best 4A, tests brightness and contrast jitter (0.2), Mixup ($\alpha$ = 0.2) and CutMix ($\alpha$ = 0.5 and 1).
 
 # %%
 s4a, s4b = stored("s4_aug_spatial"), stored("s4_aug_mix")
@@ -1729,21 +1720,19 @@ if len(s4b):
     display(config_table({r["name"]: r for r in s4b.run}, ["color_jitter", "mixup_alpha", "cutmix_alpha"]))
 
 # %% [markdown]
-# **Stronger augmentation does not help, except for colour jitter.** In 4A the mildest setting is the best: crops of at
-# least 50% of the image and no random erasing; smaller crops and more erasing lower the accuracy. In 4B, CutMix makes
-# the training task too hard for 70 epochs (the training accuracy stays well below 100%) and lowers the accuracy, Mixup
-# is neutral, and **colour jitter gives the best validation accuracy, 74.0%**. Its test accuracy, however, is not
-# higher than without it, and this is a single run with a small gain: it is the weakest decision of 2B. We keep the
-# jitter, and a crop of at least 50% without random erasing.
+# Stronger augmentation does not help, except for colour jitter. 
+#
+# - In 4A the mildest setting is the best: crops of at least 50% of the image and no random erasing; smaller crops and more erasing lower the accuracy. 
+#
+# - In 4B, CutMix makes the training task too hard for 70 epochs (the training accuracy stays well below 100%) and lowers the accuracy, Mixup is neutral, and colour jitter gives the best validation accuracy, 74.0%. 
+#
+# Its test accuracy, however, is not higher than without it, and this is a single run with a small gain: it is the weakest decision of 2B. We keep the jitter, and a crop of at least 50% without random erasing.
 #
 
 # %% [markdown]
 # ### Step 5: regularization of the classifier, confirmation with seeds
 #
-# Finally we tune the two regularizers of the classifier, **label smoothing** (0, 0.05, 0.1, 0.2; Szegedy et al., CVPR
-# 2016) and **dropout** before the linear layer (0, 0.2, 0.4; Srivastava et al., JMLR 2014), whose best values may differ
-# now that the backbone and the augmentation have changed. To avoid selecting the luckiest single run, the **two best
-# recipes are retrained with two more seeds**, and the one with the best mean validation accuracy is the result of 2B.
+# Finally we tune the two regularizers of the classifier, label smoothing (0, 0.05, 0.1, 0.2) and dropout before the linear layer (0, 0.2, 0.4), whose best values may differ now that the backbone and the augmentation have changed. To avoid selecting the luckiest single run, the two best recipes are retrained with two more seeds.
 
 # %%
 s5 = stored("s5_reg", seed=SEEDS[0])
@@ -1754,12 +1743,11 @@ if confirmed_2b:
     display(seed_summary(confirmed_2b))
 
 # %% [markdown]
-# **Classifier regularization matters little, and closes the exploration at 74.8%.** The twelve combinations are within
-# about two points and no regularizer dominates: the two best ones make opposite choices (label smoothing 0.2 with
-# dropout 0.4, label smoothing 0.1 without dropout). With three seeds, label smoothing 0.2 with dropout 0.4 is better,
-# and it also varies less between seeds: **74.8% ± 0.1 validation accuracy** at 70 epochs. This recipe is the starting
-# point of step 6.
+# Classifier regularization matters little, and closes the exploration at 74.8%. The twelve combinations are within about two points and no regularizer dominates: the two best ones make opposite choices (label smoothing 0.2 with dropout 0.4, label smoothing 0.1 without dropout). 
 #
+# With three seeds, label smoothing 0.2 with dropout 0.4 is better, and it also varies less between seeds: **74.8% ± 0.1 validation accuracy** at 70 epochs. 
+#
+# This recipe is the starting point of step 6.
 
 # %% [markdown]
 # ### Summary of the steps
@@ -1849,7 +1837,7 @@ else:
     plot_curves(s6_compare, "step 6: resolution and random erasing at 150 epochs (seed 42)")
 
 # %% [markdown]
-# **Resolution is what matters.** At 224x224, random erasing does not help: the training accuracy still reaches almost
+# We found out that resolution is what matters. At 224x224, random erasing does not help: the training accuracy still reaches almost
 # 100%, and the validation accuracy is slightly lower than without it. At 320x320 the validation accuracy increases with or without erasing.
 #
 
@@ -1911,7 +1899,7 @@ if final_groups:
 #
 # The hyperparameters of a network trained from scratch do not transfer to fine-tuning. With the recipe of Part 1 the
 # pretrained ResNet-18 ends below our own network: its learning rate, tuned for random weights, overwrites the ImageNet
-# features in the first epochs. A ten times smaller learning rate is the single change that recovers them.
+# features in the first epochs.
 #
 # Most of the techniques designed for fine-tuning brought little: freezing the backbone at the start, smaller learning
 # rates for the early layers and stronger augmentation such as Mixup and CutMix all stayed within the noise or made
@@ -1920,7 +1908,6 @@ if final_groups:
 # ends with global average pooling, 320x320 images cost no change to the architecture and gave the largest gain of all,
 # bringing the final model to **81.5% test accuracy**.
 #
-# Pretraining pays off most when training is short: in 70 epochs the tuned recipe already matches what our network
-# trained from scratch reaches in 150. With the same budget and resolution the advantage shrinks to a few points, and
-# the gap between the two parts comes as much from how the pretrained network is trained as from the pretraining
-# itself.
+# Pretraining mostly speeds up training: in 70 epochs the tuned recipe already matches what our network trained from scratch reaches in 150. 
+#
+# Most of the remaining gap to the final model comes from the training choices of 2B, mainly the higher resolution. 2A shows the converse: with the recipe of Part 1, the same pretrained weights end below our network.
