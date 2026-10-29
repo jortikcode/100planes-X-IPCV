@@ -81,8 +81,8 @@
 # no dataset and no training are needed. 
 #
 # - With `TRAIN = True` the training cells (the final models of Part 1,
-# 2A and 2B, and if `TRAIN_ABLATION = True` the ablation too) download the dataset and train the runs whose result does not
-# exist yet. 
+# 2A and 2B, and if `TRAIN_ABLATION = True` the ablation too) download the dataset and train **the runs whose result does not
+# exist yet**.
 #
 # - With `RETRAIN = True` as well, they train the final models again even if
 # their result exists.
