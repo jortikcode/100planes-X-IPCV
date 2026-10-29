@@ -1294,13 +1294,13 @@ if by_net:
 # | `no_batchnorm_lr0.01`, `no_gap_lr0.01` | the same removals at a learning rate of 0.01 | control |
 #
 # **Control:** In the roadmap, networks without BatchNorm or with the flatten head were unstable at the high learning
-# rates that the final model uses. A removal could then look harmful only because the learning rate does not suit it, as
-# in the learning-rate sweep of the roadmap: for these two components we also train at a lower learning rate, and report
-# both.
+# rates that the final model uses. A removal could then look harmful only because the learning rate does not suit it, for these two components we also train at a lower learning rate, and report both.
 #
-# **Reading the table:** `Δ val` is the validation accuracy of the ablated network minus that of the full model; a
-# component is useful if removing it lowers the accuracy by more than the seed noise (`beyond noise`: the drop exceeds
-# the larger standard deviation of the two). The train accuracy tells *how* a component helps: removing a regularizer
+# **Reading the table:** 
+# - `Δ val` is the validation accuracy of the ablated network minus that of the full model. 
+# - A component is useful if removing it lowers the accuracy by more than the seed noise (`beyond noise`: the drop exceeds
+# the larger standard deviation of the two). 
+# - The train accuracy tells how a component helps: removing a regularizer
 # raises the train-validation gap, removing capacity or an optimization aid lowers the train accuracy itself.
 
 # %%
@@ -1375,6 +1375,7 @@ def ablation_table():
     noise = np.fmax(table.val_std, full.val_std)  # the larger standard deviation of the two
     table["beyond_noise"] = np.where(full.val_mean - table.val_mean > noise, "yes", "no")
     table.loc["full model", "beyond_noise"] = ""
+    
     return table
 
 
@@ -1384,7 +1385,7 @@ ABLATION_COLUMNS = {"kind": "kind", "change": "change", "d_val": "Δ val", "d_te
 
 
 def style_ablation(table):
-    return (table[list(ABLATION_COLUMNS)].rename(columns=ABLATION_COLUMNS)
+    return (table.sort_values("d_val", ascending=True)[list(ABLATION_COLUMNS)].rename(columns=ABLATION_COLUMNS)
             .style.format({"Δ val": "{:+.3f}", "Δ test": "{:+.3f}", "train-val gap": "{:+.3f}"}, na_rep="-")
             .background_gradient(subset=["Δ val", "Δ test"], cmap="RdYlGn", vmin=-0.4, vmax=0.4)
             .set_properties(subset=pd.IndexSlice["full model", :], **{"font-weight": "bold"}))
@@ -1399,12 +1400,12 @@ else:
 # %% [markdown]
 # **Architecture.** Every component of the network is needed, but not equally.
 #
-# - **BatchNorm is essential** (−73 points): without it the network does not train at all. The loss stays at ln(100) ≈ 4.6, the value of a random guess, and the network ends up predicting almost always the same class. The reason is the depth of our network: in a residual block the output is *added* to the input, so without BatchNorm the activations grow at every one of the 14 blocks. At the end they are very large, the gradients are very large too, and the first updates are huge steps that break the network. A 5× lower learning rate (0.01) shrinks the steps, since every update is learning rate × gradient, but it only reaches 8% validation accuracy: BatchNorm, which keeps the activations at the same scale in every block, is what makes this network trainable.
-# - **Global average pooling** (−23 points): with a flatten classifier the training–validation gap doubles (48 points instead of 24), so the network memorizes much more. A lower learning rate makes it even worse (−34), so the problem is overfitting, not optimization.
-# - **Residual connections** (−17 points): here the gap gets *smaller* (13 points), so the network without skip connections fits its training set worse. It is the degradation problem of section 2: the plain 31-layer network is hard to optimize.
-# - **Depth** (−8 points with one block per stage) matters much more than the **fourth stage** (−1.4 points), which has a single block.
+# - **BatchNorm** is essential: without it the network does not train at all. The reason is the depth of our network: in a residual block the output is added to the input, so without BatchNorm the activations grow at every block. At the end they are very large, the gradients are very large too, and the first updates are huge steps that break the network. A lower learning rate shrinks the steps, since every update is learning rate $\times$ gradient, performing a little bit better.
+# - **Global average pooling**: with a flatten classifier the training–validation gap doubles, so the network memorizes much more. A lower learning rate makes it even worse, so the problem is overfitting, not optimization.
+# - **Residual connections**: here the gap gets smaller, so the network without skip connections fits its training set worse. It is the degradation problem of section 2: the plain 31-layer network is hard to optimize.
+# - **Depth** matters much more than the fourth stage, which has a single block.
 #
-# Finally, **augmentation** (−18 points) and **weight decay** (−15 points) are the most important: without them the gap almost doubles (44 and 40 points), so the network overfits. **Label smoothing** gives a small but measurable gain (−1.8 points). **Random erasing** and the **one-cycle schedule** (instead of cosine) change the accuracy by less than the seed noise: at 150 epochs, with the other regularizers, they do not make a measurable difference, even though the random search had selected them at 70 epochs.
+# Finally, **augmentation** and **weight decay** are important: without them the gap almost doubles, so the network overfits. **Label smoothing** gives a small but measurable gain. **Random erasing** and the **one-cycle schedule** (instead of cosine) change the accuracy by less than the seed noise: at 150 epochs, with the other regularizers, they do not make a measurable difference, even though the random search had selected them at 70 epochs.
 #
 
 # %% [markdown]
