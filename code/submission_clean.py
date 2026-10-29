@@ -1750,44 +1750,6 @@ if confirmed_2b:
 # This recipe is the starting point of step 6.
 
 # %% [markdown]
-# ### Summary of the steps
-#
-# The best run (seed 42) of every step, against the baseline of 2A (150 epochs).
-
-# %%
-steps_2b = {}
-baseline = stored("finetune")
-if len(baseline):
-    steps_2b["2A baseline (150 epochs)"] = baseline.run.iloc[0]
-for name, experiment in [("1. learning rate x weight decay", "s1_lr_wd"), ("2. head warmup and schedule", "s2_warmup"),
-                         ("3. progressive learning rates", "s3_proglr"), ("4. augmentation", "s4_aug_mix"),
-                         ("5. classifier regularization", "s5_reg")]:
-    t = stored(experiment, seed=SEEDS[0])
-    if len(t):
-        steps_2b[name] = best_run(t).run
-
-if steps_2b:
-    step_names = list(steps_2b)
-    xs = np.arange(len(step_names))
-    fig, ax = plt.subplots(figsize=(11, 4.4))
-    ax.plot(xs, [steps_2b[n]["best_val_acc"] for n in step_names], "o-", color=COLORS[0], markersize=8, label="validation (best epoch)")
-    ax.plot(xs, [steps_2b[n]["test_acc"] for n in step_names], "s--", color=COLORS[1], markersize=7, label="test")
-    for x_, n in zip(xs, step_names):
-        ax.annotate(f"{steps_2b[n]['best_val_acc']:.3f}", (x_, steps_2b[n]["best_val_acc"]), textcoords="offset points",
-                    xytext=(0, 9), ha="center", fontsize=8)
-    ax.set_xticks(xs, [n.replace(". ", ".\n", 1) for n in step_names], fontsize=8)
-    ax.axhline(0.70, ls="--", c="gray", lw=1, label="target of about 70%")
-    ax.set_ylabel("accuracy"); ax.legend(loc="lower right", fontsize=8)
-    ax.set_title("fine-tuning: the best run of every step (seed 42)")
-    plt.tight_layout(); plt.show()
-
-# %% [markdown]
-# Steps 1, 4 and 5 are the ones that raise the accuracy: the smaller learning rate lifts the network to the level of 2A
-# in less than half of the epochs, and the following steps add about 3 points in total, mostly from step 4 (colour jitter).
-# Steps 2 and 3 do not change the result (the winner of step 3 is the one of step 2). Note that the baseline of 2A is
-# trained for 150 epochs and the other runs for 70, and that there is no run of 2A with 70 epochs.
-
-# %% [markdown]
 # ### Step 6: longer training and higher resolution
 #
 # We train the recipe of step 5 for 150 epochs, the budget of the final models of Part 1 and 2A, and test two changes
@@ -1842,6 +1804,49 @@ else:
 #
 
 # %% [markdown]
+# ### Summary of the steps
+#
+# The best run (seed 42) of every step, against the baseline of 2A. Steps 1 to 5 train for 70 epochs, step 6 and 2A
+# for 150.
+
+# %%
+import textwrap
+
+steps_2b = {}
+baseline = stored("finetune")
+if len(baseline):
+    steps_2b["2A baseline (150 epochs)"] = baseline.run.iloc[0]
+for name, experiment in [("1. learning rate x weight decay", "s1_lr_wd"), ("2. head warmup and schedule", "s2_warmup"),
+                         ("3. progressive learning rates", "s3_proglr"), ("4. augmentation", "s4_aug_mix"),
+                         ("5. classifier regularization", "s5_reg"),
+                         ("6. 150 epochs, resolution", "s6_highres")]:
+    t = stored(experiment, seed=SEEDS[0])
+    if len(t):
+        steps_2b[name] = best_run(t).run
+
+if steps_2b:
+    step_names = list(steps_2b)
+    xs = np.arange(len(step_names))
+    fig, ax = plt.subplots(figsize=(11, 4.4))
+    ax.plot(xs, [steps_2b[n]["best_val_acc"] for n in step_names], "o-", color=COLORS[0], markersize=8, label="validation (best epoch)")
+    ax.plot(xs, [steps_2b[n]["test_acc"] for n in step_names], "s--", color=COLORS[1], markersize=7, label="test")
+    for x_, n in zip(xs, step_names):
+        ax.annotate(f"{steps_2b[n]['best_val_acc']:.3f}", (x_, steps_2b[n]["best_val_acc"]), textcoords="offset points",
+                    xytext=(0, 9), ha="center", fontsize=8)
+    ax.set_xticks(xs, [textwrap.fill(n, 16) for n in step_names], fontsize=8)
+    ax.margins(y=0.15)
+    ax.axhline(0.70, ls="--", c="gray", lw=1, label="target of about 70%")
+    ax.set_ylabel("accuracy"); ax.legend(loc="lower right", fontsize=8)
+    ax.set_title("fine-tuning: the best run of every step (seed 42)")
+    plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# Steps 1, 4 and 5 are the ones that raise the accuracy: the smaller learning rate lifts the network to the level of 2A
+# in less than half of the epochs, and the following steps add about 3 points in total, mostly from step 4 (colour jitter).
+# Steps 2 and 3 do not change the result (the winner of step 3 is the one of step 2). Step 6 gives the largest gain of
+# all, from the longer training and above all from the higher resolution.
+
+# %% [markdown]
 # ### Test-set inference with the final model of 2B
 #
 # As in Part 1: with `TRAIN = False` the stored weights (`resnet18_2B_best_s<seed>.pt`), with `TRAIN = True` the seed
@@ -1865,9 +1870,10 @@ else:
 # %% [markdown]
 # ### Comparison with Part 1 and 2A
 #
-# Mean ± standard deviation over the three seeds: our final network of Part 1 trained from scratch (150 epochs), the
-# pretrained network with the recipe of Part 1 (2A, 150 epochs), and the tuned recipe of 2B at 70 epochs, at 150 epochs,
-# and with the resolution and random erasing selected in step 6 (150 epochs).
+# The final model of each part, mean ± standard deviation over three seeds: our network trained from scratch (Part 1),
+# the pretrained ResNet-18 with the recipe of Part 1 (2A), and the pretrained ResNet-18 with the tuned recipe of 2B.
+# All three are trained for 150 epochs.
+#
 
 # %%
 # the final model of each part
