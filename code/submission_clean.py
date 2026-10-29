@@ -293,17 +293,13 @@ LONG_EPOCHS = 150
 #
 # ## Data
 #
-# FGVC-Aircraft (`torchvision.datasets.FGVCAircraft`, `annotation_level="variant"`) has 100 classes and 3,334 / 3,333 / 3,333 images in the training / validation / test splits: about **33 training images per class**. With so few images a network can memorize the training set long before it learns features that generalize, and this is the problem most of the following steps address.
+# FGVC-Aircraft (`annotation_level="variant"`) has 100 classes and 3,334 / 3,333 / 3,333 images in the training / validation / test splits: about **33 training images per class**.
 #
 # <img src="https://raw.githubusercontent.com/jortikcode/100planes-X-IPCV/main/figures/data_pipeline.png" alt="data pipeline" width="100%">
 #
-# **Preprocessing** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>). We then resize the image to 224x224 *without* keeping the aspect ratio. Finally, as in VGG (Simonyan & Zisserman, 2015), we subtract the per-channel mean of the training split, and we also divide by the per-channel standard deviation, following the PyTorch convention (<a href="https://docs.pytorch.org/vision/stable/models.html" target="_blank">TorchVision, Models and pre-trained weights</a> and <a href="https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html">torchvision.models.resnet18</a>).
+# **Preprocessing** (top row). As the authors of the dataset require, we remove the 20-pixel copyright banner at the bottom of every image ("Please make sure to remove this banner when using the images to train and evaluate algorithms", <a href="https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/#format" target="_blank">FGVC-Aircraft</a>). We then resize the image to 224x224 without keeping the aspect ratio. Finally, as in VGG (Simonyan & Zisserman, 2015), we subtract the per-channel mean of the training split, and we also divide by the per-channel standard deviation, following the PyTorch convention (<a href="https://docs.pytorch.org/vision/stable/models.html" target="_blank">TorchVision, Models and pre-trained weights</a> and <a href="https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html">torchvision.models.resnet18</a>).
 #
-# **Augmentation, on training batches only** (bottom row). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe.
-#
-# **Data loading.** The images are read and preprocessed on the fly by a `DataLoader`; the augmentation uses the
-# torchvision transforms `RandomResizedCrop`, `RandomHorizontalFlip` and `RandomErasing`. The dataset is read through
-# the torchvision class, which downloads it the first time a run is trained.
+# **Augmentation, on training batches only** (bottom row). Random resized crops and horizontal flips change scale and position while preserving the label: a mirrored aircraft is still the same aircraft. Then random erasing is added by the training recipe
 
 # %%
 from functools import cache
@@ -418,13 +414,10 @@ def batches(split, data, cfg, train):
 #
 # <img src="https://raw.githubusercontent.com/jortikcode/100planes-X-IPCV/main/figures/network.png" alt="network" width="100%">
 #
-# - **Stem**: three 3x3 convolutions (32, 32, 64 channels, the first with stride 2) and a 3x3 max-pool with stride 2,
-#   which reduce the resolution from 224x224 to 56x56, as in ResNet-C.
-# - **Stages**: up to four stages of identical blocks, with every stage after the first
-#   halving the resolution and doubling the number of channels. A block is two 3x3 convolutions, each followed by a ReLU.
+# - **Stem**: three 3x3 convolutions (32, 32, 64 channels, the first with stride 2) and a 3x3 max-pool with stride 2, which reduce the resolution from 224x224 to 56x56, as in ResNet-C.
+# - **Stages**: up to four stages of identical blocks, with every stage after the first halving the resolution and doubling the number of channels. A block is two 3x3 convolutions, each followed by a ReLU.
 # - **BatchNorm** (optional): after every convolution, before the ReLU; the convolutions it follows have no bias.
-# - **Residual connections** (optional): the block adds its input to its output before the second ReLU. When the
-#   resolution or the number of channels changes, the input goes through a 1x1 convolution with BatchNorm (projection).
+# - **Residual connections** (optional): the block adds its input to its output before the second ReLU. When the resolution or the number of channels changes, the input goes through a 1x1 convolution with BatchNorm (projection).
 # - **Classifier**: global average pooling followed by a linear layer, or (optional) a flatten layer followed by a linear
 #   layer.
 #
@@ -667,7 +660,7 @@ def fit(cfg, data):
 #
 # ## Experiment runner and stored runs
 #
-# `run_experiment` trains one configuration (in `results/part1`, or in the directory given by `results_dir` for Part 2),
+# `run_experiment` trains one configuration,
 # evaluates its best checkpoint on the test split and stores the configuration, the per-epoch curves and the test
 # predictions; a run whose result already exists with the same configuration is loaded instead of trained. The runs of
 # the roadmap, of the depth and residual comparison and of the recipe search were obtained by calling it for every
@@ -925,7 +918,7 @@ if len(stored("ladder")):
 # %% [markdown]
 # A single learning rate for every step would have penalized some of the networks: this is why every configuration is compared at its own best
 #
-# **At this point the target accuracy for this part** (~50%) is satisfied, but since with the use of augmentation and the fourth stage the network was still improving we decided to go further and explore wheter **more depth, residual connections and a tuned training recipe** could benefit overall.
+# **At this point the target accuracy for this part** (~50%) is satisfied, but since with the use of augmentation and the fourth stage the network was still improving we decided to go further and explore wheter adding **more depth, residual connections and a tuned training recipe** could benefit overall.
 
 # %% [markdown]
 # <a id="2-depth-and-residual-connections" name="2-depth-and-residual-connections"></a>
@@ -972,14 +965,12 @@ if grid_runs:
 
 
 # %% [markdown]
-# **Degradation.** From 19 to 31 layers the plain network degrades its validation accuracy, and its *training* accuracy
+# **Degradation.** From 19 to 31 layers the plain network degrades its validation accuracy, and its training accuracy
 # drops too: the deeper plain network is harder to optimize as we saw in lecture 5.
 # The residual network improves at every depth and keeps fitting its training set: skip
 # connections make depth usable.
 #
-# **Shallow networks.** At 11 and 19 layers the residual networks are about 4 points worse than the plain ones, well beyond the seed noise. This is not an optimization problem: they fit their training set slightly better, so they lose accuracy on unseen images, not on the training set. At these depths a plain network is still easy to optimize, so skip connections bring no benefit. We expect regularization to help the residual networks more than the plain ones.
-#
-#
+# **Shallow networks.** At 11 and 19 layers the residual networks are about 4 points worse than the plain ones, well beyond the seed noise. At these depths a plain network is still easy to optimize, so skip connections bring no benefit. 
 
 # %% [markdown]
 # <a id="3-the-training-recipe" name="3-the-training-recipe"></a>
@@ -1205,9 +1196,9 @@ if tuned:
 # ## 4. Longer training and the final model
 #
 # We train the three tuned networks again for **150 epochs**, each with its best configuration and no other change,
-# with three seeds each. The one-cycle schedule is defined in fractions of the training, so it stretches with the number
-# of epochs: in the middle of a longer run the learning rate is still high, and validation accuracy only rises during
-# the final decay. Since the recipe was tuned for 70 epochs, a longer training also gives more time to overfit: if the gap between training and validation accuracy grew, the regularization tuned at 70 epochs would no longer be adequate and would have to be tuned again. We check that it does not grow.
+# with three seeds each. 
+#
+# If the gap between training and validation accuracy grew, the regularization tuned at 70 epochs would no longer be adequate and would have to be tuned again. We check that it does not grow.
 
 # %%
 # The longer trainings and the final model.
@@ -1269,6 +1260,7 @@ if by_net:
 
 # %% [markdown]
 # **Longer training improves validation accuracy** to every network, with no other change: at 70 epochs they were stopped too early.
+#
 # **Overfitting does not increase**: the train–validation gap of the 31-layer residual network goes from 26 points at 70 epochs to 24 at
 # 150, so the recipe tuned for 70 epochs still controls overfitting with a longer budget.
 #
@@ -1289,7 +1281,7 @@ if by_net:
 #
 # | ablation | what changes | component tested |
 # |---|---|---|
-# | `no_batchnorm` | BatchNorm removed (convolutions get a bias back) | architecture |
+# | `no_batchnorm` | BatchNorm removed | architecture |
 # | `no_gap` | flatten + linear head instead of global average pooling | architecture |
 # | `no_residual` | skip connections removed (plain network) | architecture |
 # | `no_stage4` | the 512-channel stage removed | architecture |
