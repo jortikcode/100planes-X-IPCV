@@ -188,7 +188,6 @@ if FETCH_RESULTS:
 # configuration trained twice with the same configuration gives the same result. Training a configuration with different seeds
 # is how we measure run-to-run noise.
 
-
 # %%
 def fix_random(seed):
     random.seed(seed)
@@ -788,7 +787,7 @@ def run_overrides(run):
     return {k: v for k, v in run["config"].items() if k not in ("name", "group", "seed")}
 
 
-# %% id="7KjzoXrcQLJa"
+# %%
 # Readable names for tables and plots; the stored run names are unchanged
 DISPLAY = {
     "s0_vgg": "plain VGG", "s1_bn": "+ BatchNorm", "s2_gap": "+ global average pooling",
@@ -884,7 +883,7 @@ def plot_curves(runs, title=""):
 # Each step at its best learning rate; the curves show validation accuracy (dot = best epoch), validation loss and
 # training accuracy.
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="Wtr32tImQLJa" outputId="300d5da5-ff4b-4a91-905f-077b83240ec6"
+# %%
 steps = {n: best_lr("ladder", n) for n, _ in LADDER}
 steps = {n: r.run for n, r in steps.items() if r is not None}
 if steps:
@@ -907,7 +906,7 @@ if steps:
 #
 # Best validation accuracy of every step at each learning rate.
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 457} id="EREoptOEQLJa" outputId="b1f921c9-419f-4102-b418-108146e1c403"
+# %%
 if len(stored("ladder")):
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for i, (name, _) in enumerate(LADDER):
@@ -945,7 +944,7 @@ if len(stored("ladder")):
 # The six networks with their validation accuracy (mean ± standard deviation over three seeds) and training accuracy;
 # then the same numbers against depth: left validation, right training accuracy.
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="RaFm2k7bQLJa" outputId="4a7e304e-7665-41ad-ad70-eea0de276bbc"
+# %%
 grid_runs = {n: at_best_lr("depth_residual", n) for n, _ in GRID}
 grid_runs = {n: t for n, t in grid_runs.items() if len(t)}
 if grid_runs:
@@ -1065,7 +1064,7 @@ def best_tuned(name):
 #
 # Best validation accuracy of every point of the grid (seed 42), one panel per network; the ring marks the best point.
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 353} id="neNY--9cQLJa" outputId="be6ede74-60b1-438b-eb75-41c46a95663d"
+# %%
 tuned = finalists(TUNE_N) or []
 if tuned and len(stored("recipe")):
     fig, axes = plt.subplots(1, len(tuned), figsize=(15, 4.2), sharey=True)
@@ -1085,7 +1084,6 @@ if tuned and len(stored("recipe")):
     axes[0].set_ylabel("best validation accuracy (%)"); axes[0].legend(loc="lower left", fontsize=9, frameon=False)
     plt.tight_layout(); plt.show()
 
-
 # %% [markdown]
 # Accuracy increases with weight decay **for both residual networks**.
 #
@@ -1101,7 +1099,7 @@ if tuned and len(stored("recipe")):
 # Every configuration on every network (seed 42), sorted by the mean over the networks; in the plot every configuration is a
 # line through its parameter values, ending at its mean accuracy over the three networks (dark blue: the best configuration, light blue: the second best).
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 754} id="0UkjEj6DQLJa" outputId="ce26e558-8779-42b3-9db8-beb361b5f4dd"
+# %%
 search = stored("recipe", seed=SEEDS[0])
 search = search[search.variant.str.startswith("cfg") & search.network.isin(tuned)]
 if len(search):
@@ -1152,7 +1150,6 @@ if len(search):
     ax.tick_params(axis="x", length=0)
     plt.tight_layout(); plt.show()
 
-
 # %% [markdown]
 # The ranking is consistent across networks: the same configuration (configuration 5, **label smoothing 0.2, no dropout,
 # random erasing 0.25, minimum crop 50%, one-cycle schedule**) is the best or second best for all three. The one-cycle schedule
@@ -1165,7 +1162,7 @@ if len(search):
 #
 # The two best configurations of each network, mean ± standard deviation over three seeds.
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 755} id="wwg-HozpQLJb" outputId="d9904fa7-5afe-40a9-d874-f876706e0cd2"
+# %%
 if tuned:
     groups, best_per_net = {}, {}
     for name in tuned:
@@ -1218,7 +1215,7 @@ def long_final():
     return by_net if nets and all(len(t) == len(SEEDS) for t in by_net.values()) else None
 
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="eJj0cSoOQLJZ" outputId="28f103dc-8786-4326-e9ec-7d6b69800de6"
+# %%
 # [run]
 # The final model, stated explicitly: res_3461 with the best configuration of its recipe search (cfg05), trained
 # for LONG_EPOCHS epochs. Its ablations each change exactly one component of this configuration.
@@ -1233,14 +1230,13 @@ if TRAIN:
         runs.append(current_run)
     final_model_part_1 = max(runs, key=lambda r: r['final_val_acc'])['model']
 
-
 # %% [markdown]
 # ### Results
 #
 # Each tuned network at 70 and at 150 epochs (mean ± standard deviation over three seeds) and the selection rule at 150
 # epochs; the curves compare the two budgets (seed 42).
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 755} id="fG8OmpbpQLJb" outputId="fa7b56cd-10bf-4316-8d20-9c0dae878b85"
+# %%
 tuned = finalists(TUNE_N) or []
 groups = {}
 for name in tuned:
@@ -1338,10 +1334,10 @@ else:
 # **Control:** In the roadmap, networks without BatchNorm or with the flatten head were unstable at the high learning
 # rates that the final model uses. A removal could then look harmful only because the learning rate does not suit it, for these two components we also train at a lower learning rate, and report both.
 #
-# **Reading the table:** 
-# - `Δ val` is the validation accuracy of the ablated network minus that of the full model. 
+# **Reading the table:**
+# - `Δ val` is the validation accuracy of the ablated network minus that of the full model.
 # - A component is useful if removing it lowers the accuracy by more than the seed noise (`beyond noise`: the drop exceeds
-# the larger standard deviation of the two). 
+# the larger standard deviation of the two).
 # - The train accuracy tells how a component helps: removing a regularizer
 # raises the train-validation gap, removing capacity or an optimization aid lowers the train accuracy itself.
 
@@ -1381,7 +1377,6 @@ print(f"final model: {FINAL_NET}, {ABLATION_BASE['epochs']} epochs, lr {ABLATION
 for name, (kind, over) in ABLATIONS.items():
     print(f"{name:22s} {kind:13s} {over}")
 
-
 # %%
 # [run]
 if TRAIN and TRAIN_ABLATION:
@@ -1389,12 +1384,12 @@ if TRAIN and TRAIN_ABLATION:
         for seed in SEEDS:
             run_experiment(f"{name}_s{seed}", ABLATION_GROUP, **{**ABLATION_BASE, **over, "seed": seed})
 
+
 # %% [markdown]
 # ### Results of the ablation
 #
 # Mean ± standard deviation over three seeds, each ablated network against the full model (the longer training of the
 # final network, same seeds).
-
 
 # %%
 def ablation_table():
@@ -1417,7 +1412,7 @@ def ablation_table():
     noise = np.fmax(table.val_std, full.val_std)  # the larger standard deviation of the two
     table["beyond_noise"] = np.where(full.val_mean - table.val_mean > noise, "yes", "no")
     table.loc["full model", "beyond_noise"] = ""
-    
+
     return table
 
 
@@ -1578,6 +1573,7 @@ if len(finetune):
 else:
     print("no stored run yet")
 
+
 # %% [markdown]
 # **Part 1's recipe does not suit a pretrained network.** The pretrained ResNet-18 starts much faster than the network trained from scratch, but its accuracy collapses as the one-cycle schedule raises the learning rate towards 0.05, long before the peak. Even its *training* accuracy falls: the large updates overwrite the ImageNet features that made the start fast. The network recovers only once the learning rate decays, and ends below the network trained from scratch, so with these hyperparameters the pretraining is largely wasted. 2B adapts the recipe to fine-tuning, starting from a much lower learning rate.
 #
@@ -1628,6 +1624,7 @@ def confirmed_s5():
     # {recipe: runs over the seeds} for the TOP_K best recipes of step 5.
     top = stored("s5_reg", seed=SEEDS[0]).sort_values("val", ascending=False, kind="stable").network[:TOP_K]
     return {n: stored("s5_reg", n) for n in top}
+
 
 # %% [markdown]
 # ### Step 1: learning rate and weight decay
