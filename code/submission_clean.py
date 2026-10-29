@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.6
+#       jupytext_version: 1.19.5
 #   kernelspec:
 #     display_name: ipcv_task2
 #     language: python
@@ -151,7 +151,7 @@ for d in (RESULTS_DIR, RESULTS_DIR_2A, RESULTS_DIR_2B, DATA_ROOT):
     d.mkdir(parents=True, exist_ok=True)
 print("results ->", RESULTS_ROOT)
 
-RESULTS_ARCHIVE_ID = "1TWAHMvXZ09Bg9gUZplJ3s_uWjsGc_-hk"  # Google Drive file id
+RESULTS_ARCHIVE_ID = "1zpbh6SpcWgkt4Hx_sLNAHeVhu19FZ0A8"  # Google Drive file id
 FETCH_RESULTS = True  # False: use only the results already in RESULTS_ROOT
 
 
@@ -709,6 +709,7 @@ def run_experiment(name, group, results_dir=None, **overrides):
         test_acc=test_acc, test_loss=test_loss, test_pred=test_pred, test_true=data["test"].y.tolist(),
         params=count_params(model), minutes=(time.time() - t0) / 60, diverged=diverged,
         device=torch.cuda.get_device_name() if DEVICE.type == "cuda" else str(DEVICE),
+        model = model
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(run))
@@ -1224,8 +1225,11 @@ FINAL_CONFIG = {**dict(GRID)[FINAL_NET], "lr": 0.05, "weight_decay": 5e-3, "labe
                 "dropout": 0.0, "random_erasing": 0.25, "crop_scale": (0.5, 1.0), "schedule": "onecycle",
                 "epochs": LONG_EPOCHS}
 if TRAIN:
+    runs = []
     for seed in SEEDS:
-        run_experiment(f"{FINAL_NET}_ep{LONG_EPOCHS}_s{seed}", "long", **{**FINAL_CONFIG, "seed": seed})
+        current_run = run_experiment(f"{FINAL_NET}_ep{LONG_EPOCHS}_s{seed}", "long", **{**FINAL_CONFIG, "seed": seed})
+        runs.append(current_run)
+    final_model_part_1 = max(runs, key=lambda r: r['final_val_acc'])['model']
 
 
 # %% [markdown]
@@ -1448,6 +1452,40 @@ if ablation is not None:
 # Finally, not every choice of the search turned out to matter: the ablation shows that some components selected
 # at 70 epochs bring no measurable benefit in the final model, while BatchNorm, which we added first, is the one the
 # network cannot do without.
+
+# %% [markdown]
+# ### Test-set inference with the best Part 1 model
+#
+# Loads `res_3461_best_s42.pt` from the results folder (when `TRAIN=False`) or trains and evaluates
+# the final model on-the-fly (when `TRAIN=True`).
+
+# %%
+# Inference on the test set with the best Part 1 model (res_3461, seed 42)
+# TRAIN=False  → load pre-trained weights from the results folder
+# TRAIN=True   → train the final model from scratch and evaluate it
+
+_P1_CFG = {
+    "img_size": 224, "augment": True, "crop_scale": [0.5, 1.0],
+    "stem": [32, 32, 64], "channels": [64, 128, 256, 512], "blocks": [3, 4, 6, 1],
+    "batchnorm": True, "gap": True, "residual": True, "dropout": 0.0,
+    "epochs": 150, "batch_size": 64, "lr": 0.05, "momentum": 0.9,
+    "weight_decay": 0.005, "label_smoothing": 0.2, "random_erasing": 0.25,
+    "warmup_epochs": 3, "schedule": "onecycle", "seed": 42,
+}
+_P1_WEIGHTS = RESULTS_DIR / "res_3461_best_s42.pt"
+
+if TRAIN:
+    _p1_data = get_data(_P1_CFG["img_size"])
+    _p1_model = final_model_part_1
+else:
+    _P1_CFG_full = {**BASE, **_P1_CFG}
+    _p1_model = build_model(_P1_CFG_full, N_CLASSES).to(DEVICE)
+    _p1_model.load_state_dict(torch.load(_P1_WEIGHTS, map_location=DEVICE))
+    _p1_data = get_data(_P1_CFG["img_size"])
+
+_p1_model.eval()
+_, _p1_test_acc = evaluate(_p1_model, _p1_data["test"], _p1_data, {**BASE, **_P1_CFG})
+print(f"Part 1 best model (res_3461, seed 42) — test accuracy: {_p1_test_acc:.4f} ({100*_p1_test_acc:.2f}%)")
 
 # %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
@@ -1776,8 +1814,12 @@ FINAL_2B = dict(pretrained=True, img_size=320, augment=True, crop_scale=(0.5, 1.
                 epochs=LONG_EPOCHS, lr=0.01, layer_decay=1.0, weight_decay=5e-3, label_smoothing=0.2,
                 schedule="onecycle")
 if TRAIN:
+    runs = []
     for seed in SEEDS:
-        run_experiment(f"resnet18_2B_best_s{seed}", "s6_final_seeds", results_dir=RESULTS_DIR_2B, seed=seed, **FINAL_2B)
+        current_run = run_experiment(f"resnet18_2B_best_s{seed}", "s6_final_seeds", results_dir=RESULTS_DIR_2B, seed=seed, **FINAL_2B)
+        runs.append(current_run)
+    final_model_part_2B = max(runs, key=lambda r: r['final_val_acc'])['model']
+
 
 # %%
 s6_runs = {r["name"]: r for r in stored("s6_highres").run}
@@ -1852,3 +1894,29 @@ if final_groups:
 # trained from scratch reaches in 150. With the same budget and resolution the advantage shrinks to a few points, and
 # the gap between the two parts comes as much from how the pretrained network is trained as from the pretraining
 # itself.
+
+# %% [markdown]
+# ### Test-set inference with the best Part 2B model
+#
+# Loads `resnet18_2B_best_s42.pt` from the results folder (when `TRAIN=False`) or trains and evaluates
+# the final 2B model on-the-fly (when `TRAIN=True`).
+
+# %%
+# Inference on the test set with the best Part 2B model (resnet18_2B_best_s42, seed 42)
+# TRAIN=False  → load pre-trained weights from the results folder
+# TRAIN=True   → train the final 2B model from scratch and evaluate it
+
+_P2B_WEIGHTS = RESULTS_DIR_2B / "resnet18_2B_best_s42.pt"
+_P2B_CFG = {**FINAL_2B, "seed": 42}
+
+if TRAIN:
+    _p2b_data = get_data(_P2B_CFG["img_size"], imagenet_stats=True)
+    _p2b_model = final_model_part_2B
+else:
+    _p2b_model = build_model({**BASE, **_P2B_CFG}, N_CLASSES).to(DEVICE)
+    _p2b_model.load_state_dict(torch.load(_P2B_WEIGHTS, map_location=DEVICE))
+    _p2b_data = get_data(_P2B_CFG["img_size"], imagenet_stats=True)
+
+_p2b_model.eval()
+_, _p2b_test_acc = evaluate(_p2b_model, _p2b_data["test"], _p2b_data, {**BASE, **_P2B_CFG})
+print(f"Part 2B best model (resnet18_2B_best_s42) — test accuracy: {_p2b_test_acc:.4f} ({100*_p2b_test_acc:.2f}%)")
