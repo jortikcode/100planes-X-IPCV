@@ -86,6 +86,7 @@
 #
 # - With `RETRAIN = True` as well, they train the final models again even if
 # their result exists.
+# - Finally, the flag `INFERENCE = True` allows to evaluate the performance of the best models from part 1 and part 2B on the test set.
 #
 # Locally, results are kept in the `results` directory of the repository and the dataset in its `data` directory, on Colab both stay on the temporary disk of the session.
 #
