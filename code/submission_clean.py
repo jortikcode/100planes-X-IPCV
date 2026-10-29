@@ -44,7 +44,7 @@
 #    [learning rate and weight decay](#step-1--learning-rate-and-weight-decay),
 #    [random search](#step-2--random-search),
 #    [confirmation with seeds](#step-3--confirmation-with-seeds)
-# 4. [Longer training and the final model](#4-longer-training-and-the-final-model)
+# 4. [Longer training and the final model](#4-longer-training-and-the-final-model) — [test-set inference](#test-set-inference-with-the-final-model)
 # 5. [Ablation of the final model](#5-ablation-of-the-final-model)
 #
 # [Conclusions](#conclusions)
@@ -86,7 +86,8 @@
 #
 # - With `RETRAIN = True` as well, they train the final models again even if
 # their result exists.
-# - Finally, the flag `INFERENCE = True` allows to evaluate the performance of the best models from part 1 and part 2B on the test set.
+# - With `INFERENCE = True` the final models of Part 1 and 2B are evaluated on the test split: with `TRAIN = False`
+# their stored weights (part of the results archive), with `TRAIN = True` the best of the seeds trained in the session.
 #
 # Locally, results are kept in the `results` directory of the repository and the dataset in its `data` directory, on Colab both stay on the temporary disk of the session.
 #
@@ -126,8 +127,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.ba
 TRAIN = False  # True: run the training cells (final models of Part 1, 2A and 2B)
 TRAIN_ABLATION = False  # True: with TRAIN, also the ablation of Part 1 (36 runs)
 RETRAIN = False  # True: with TRAIN, train the runs again even if they are stored, writing over them
-INFERENCE = False #True: if TRAIN is false, downloads the best model from gdown and evaluates the test set using it,
-                    #if TRAIN is true, uses the final model just trained to evaluate the test set.
+INFERENCE = False  # True: evaluate the final models of Part 1 and 2B on the test split (needs the dataset)
 print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if DEVICE.type == "cuda" else "")
       + f" | torch {torch.__version__}")
 
@@ -788,6 +788,28 @@ def run_overrides(run):
     return {k: v for k, v in run["config"].items() if k not in ("name", "group", "seed")}
 
 
+def keep_best(runs, weights_dir, prefix):
+    # The model and seed of the run with the best validation accuracy. When that model was trained in this session,
+    # its weights replace the stored ones (weights_dir/<prefix>_s<seed>.pt); a stored run has no model (None).
+    best = max(runs, key=lambda r: r["best_val_acc"])
+    if best["model"] is not None:
+        for old in weights_dir.glob(f"{prefix}_s*.pt"):
+            old.unlink()
+        torch.save(best["model"].state_dict(), weights_dir / f"{prefix}_s{best['seed']}.pt")
+    return best["model"], best["seed"]
+
+
+def load_best(weights_dir, prefix, cfg):
+    # The stored weights of a final model (weights_dir/<prefix>_s<seed>.pt, from the results archive) and their seed.
+    paths = sorted(weights_dir.glob(f"{prefix}_s*.pt"))
+    if not paths:
+        raise FileNotFoundError(f"no {prefix}_s*.pt in {weights_dir}")
+    model = build_model(cfg, N_CLASSES).to(DEVICE)
+    model.load_state_dict(torch.load(paths[-1], map_location=DEVICE))
+    return model, int(paths[-1].stem.rsplit("_s", 1)[1])
+
+
+
 # %%
 # Readable names for tables and plots; the stored run names are unchanged
 DISPLAY = {
@@ -1225,11 +1247,9 @@ FINAL_CONFIG = {**dict(GRID)[FINAL_NET], "lr": 0.05, "weight_decay": 5e-3, "labe
                 "dropout": 0.0, "random_erasing": 0.25, "crop_scale": (0.5, 1.0), "schedule": "onecycle",
                 "epochs": LONG_EPOCHS}
 if TRAIN:
-    runs = []
-    for seed in SEEDS:
-        current_run = run_experiment(f"{FINAL_NET}_ep{LONG_EPOCHS}_s{seed}", "long", **{**FINAL_CONFIG, "seed": seed})
-        runs.append(current_run)
-    final_model_part_1 = max(runs, key=lambda r: r['final_val_acc'])['model']
+    runs = [run_experiment(f"{FINAL_NET}_ep{LONG_EPOCHS}_s{seed}", "long", **{**FINAL_CONFIG, "seed": seed})
+            for seed in SEEDS]
+    final_model_part_1, final_seed_part_1 = keep_best(runs, RESULTS_DIR, f"{FINAL_NET}_best")
 
 # %% [markdown]
 # ### Results
@@ -1273,40 +1293,28 @@ if by_net:
 # connections, with a tuned training recipe.
 
 # %% [markdown]
-# ### OPTIONAL - Test-set inference with the best Part 1 model
+# <a id="test-set-inference-with-the-final-model" name="test-set-inference-with-the-final-model"></a>
 #
-# Loads `res_3461_best_s42.pt` from the results folder (when `TRAIN=False`) or evaluates
-# the final model just trained (when `TRAIN=True`).
+# ### Test-set inference with the final model
+#
+# With `INFERENCE = True`: the final model is evaluated on the test split. With `TRAIN = False` it is loaded from the
+# stored weights (`res_3461_best_s<seed>.pt`, in the results archive); with `TRAIN = True` it is the seed with the
+# best validation accuracy among those just trained, whose weights replace the stored ones.
+#
 
 # %%
-# Inference on the test set with the best Part 1 model (res_3461, seed 42)
-# TRAIN=False  → load pre-trained weights from the results folder
-# TRAIN=True   → train the final model from scratch and evaluate it
 if INFERENCE:
-    _P1_CFG = {
-        "img_size": 224, "augment": True, "crop_scale": [0.5, 1.0],
-        "stem": [32, 32, 64], "channels": [64, 128, 256, 512], "blocks": [3, 4, 6, 1],
-        "batchnorm": True, "gap": True, "residual": True, "dropout": 0.0,
-        "epochs": 150, "batch_size": 64, "lr": 0.05, "momentum": 0.9,
-        "weight_decay": 0.005, "label_smoothing": 0.2, "random_erasing": 0.25,
-        "warmup_epochs": 3, "schedule": "onecycle", "seed": 42,
-    }
-    _P1_WEIGHTS = RESULTS_DIR / "res_3461_best_s42.pt"
-
-    if TRAIN:
-        _p1_data = get_data(_P1_CFG["img_size"])
-        _p1_model = final_model_part_1
-    else:
-        _P1_CFG_full = {**BASE, **_P1_CFG}
-        _p1_model = build_model(_P1_CFG_full, N_CLASSES).to(DEVICE)
-        _p1_model.load_state_dict(torch.load(_P1_WEIGHTS, map_location=DEVICE))
-        _p1_data = get_data(_P1_CFG["img_size"])
-
-    _p1_model.eval()
-    _, _p1_test_acc = evaluate(_p1_model, _p1_data["test"], _p1_data, {**BASE, **_P1_CFG})
-    print(f"Part 1 best model (res_3461, seed 42) — test accuracy: {_p1_test_acc:.4f} ({100*_p1_test_acc:.2f}%)")
+    _p1_cfg = {**BASE, **FINAL_CONFIG}
+    if TRAIN and final_model_part_1 is not None:  # the best of the seeds trained above
+        _p1_model, _p1_seed = final_model_part_1, final_seed_part_1
+    else:  # the stored weights (also with TRAIN, when the runs were loaded instead of trained)
+        _p1_model, _p1_seed = load_best(RESULTS_DIR, f"{FINAL_NET}_best", _p1_cfg)
+    _p1_data = get_data(_p1_cfg["img_size"])
+    _, _p1_test_acc = evaluate(_p1_model, _p1_data["test"], _p1_data, _p1_cfg)
+    print(f"final model of Part 1 ({FINAL_NET}, seed {_p1_seed}): test accuracy {_p1_test_acc:.4f}")
 else:
-    print("Skipped inference on test set.")
+    print("INFERENCE = False: test-set inference skipped")
+
 
 # %% [markdown]
 # <a id="5-ablation-of-the-final-model" name="5-ablation-of-the-final-model"></a>
@@ -1817,11 +1825,9 @@ FINAL_2B = dict(pretrained=True, img_size=320, augment=True, crop_scale=(0.5, 1.
                 epochs=LONG_EPOCHS, lr=0.01, layer_decay=1.0, weight_decay=5e-3, label_smoothing=0.2,
                 schedule="onecycle")
 if TRAIN:
-    runs = []
-    for seed in SEEDS:
-        current_run = run_experiment(f"resnet18_2B_best_s{seed}", "s6_final_seeds", results_dir=RESULTS_DIR_2B, seed=seed, **FINAL_2B)
-        runs.append(current_run)
-    final_model_part_2B = max(runs, key=lambda r: r['final_val_acc'])['model']
+    runs = [run_experiment(f"resnet18_2B_best_s{seed}", "s6_final_seeds", results_dir=RESULTS_DIR_2B, seed=seed,
+                           **FINAL_2B) for seed in SEEDS]
+    final_model_part_2B, final_seed_part_2B = keep_best(runs, RESULTS_DIR_2B, "resnet18_2B_best")
 
 
 # %%
@@ -1848,33 +1854,25 @@ else:
 #
 
 # %% [markdown]
-# ### Test-set inference with the best Part 2B model
+# ### Test-set inference with the final model of 2B
 #
-# Loads `resnet18_2B_best_s42.pt` from the results folder (when `TRAIN=False`) or trains and evaluates
-# the final 2B model on-the-fly (when `TRAIN=True`).
+# As in Part 1: with `TRAIN = False` the stored weights (`resnet18_2B_best_s<seed>.pt`), with `TRAIN = True` the seed
+# with the best validation accuracy among those just trained.
+#
 
 # %%
 if INFERENCE:
-    # Inference on the test set with the best Part 2B model (resnet18_2B_best_s42, seed 42)
-    # TRAIN=False  → load pre-trained weights from the results folder
-    # TRAIN=True   → train the final 2B model from scratch and evaluate it
-
-    _P2B_WEIGHTS = RESULTS_DIR_2B / "resnet18_2B_best_s42.pt"
-    _P2B_CFG = {**FINAL_2B, "seed": 42}
-
-    if TRAIN:
-        _p2b_data = get_data(_P2B_CFG["img_size"], imagenet_stats=True)
-        _p2b_model = final_model_part_2B
-    else:
-        _p2b_model = build_model({**BASE, **_P2B_CFG}, N_CLASSES).to(DEVICE)
-        _p2b_model.load_state_dict(torch.load(_P2B_WEIGHTS, map_location=DEVICE))
-        _p2b_data = get_data(_P2B_CFG["img_size"], imagenet_stats=True)
-
-    _p2b_model.eval()
-    _, _p2b_test_acc = evaluate(_p2b_model, _p2b_data["test"], _p2b_data, {**BASE, **_P2B_CFG})
-    print(f"Part 2B best model (resnet18_2B_best_s42) — test accuracy: {_p2b_test_acc:.4f} ({100*_p2b_test_acc:.2f}%)")
+    _p2b_cfg = {**BASE, **FINAL_2B}
+    if TRAIN and final_model_part_2B is not None:  # the best of the seeds trained above
+        _p2b_model, _p2b_seed = final_model_part_2B, final_seed_part_2B
+    else:  # the stored weights (also with TRAIN, when the runs were loaded instead of trained)
+        _p2b_model, _p2b_seed = load_best(RESULTS_DIR_2B, "resnet18_2B_best", _p2b_cfg)
+    _p2b_data = get_data(_p2b_cfg["img_size"], imagenet_stats=True)
+    _, _p2b_test_acc = evaluate(_p2b_model, _p2b_data["test"], _p2b_data, _p2b_cfg)
+    print(f"final model of 2B (resnet18, seed {_p2b_seed}): test accuracy {_p2b_test_acc:.4f}")
 else:
-    print("Inference on the test set skipped")
+    print("INFERENCE = False: test-set inference skipped")
+
 
 # %% [markdown]
 # ### Comparison with Part 1 and 2A
