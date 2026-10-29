@@ -38,7 +38,7 @@
 #
 # **Experiments**
 # 1. [From a plain VGG to a residual network: a roadmap](#1-from-a-plain-vgg-to-a-residual-network-a-roadmap)
-#    — [results](#roadmap-results), [sensitivity to the learning rate](#sensitivity-to-the-learning-rate)
+#    — [results](#results-of-the-roadmap), [sensitivity to the learning rate](#sensitivity-to-the-learning-rate)
 # 2. [Depth and residual connections](#2-depth-and-residual-connections)
 # 3. [The training recipe](#3-the-training-recipe) —
 #    [learning rate and weight decay](#step-1--learning-rate-and-weight-decay),
@@ -69,7 +69,9 @@
 # **Result.** The final model is a residual network with 31 convolutional layers, trained for 150 epochs with the tuned recipe: **74.0% ± 0.7 validation and 74.2% ± 0.2 test accuracy** (mean ± standard deviation over three seeds).
 
 # %% [markdown]
-# ## <a id="setup-shared-by-all-parts" name="setup-shared-by-all-parts"></a>Setup (shared by all parts)
+# <a id="setup-shared-by-all-parts" name="setup-shared-by-all-parts"></a>
+#
+# ## Setup (shared by all parts)
 #
 # **How to run.** The notebook runs top to bottom, locally or on Colab. All the runs reported below are stored in a
 # shared Google Drive folder (a copy of the `results` directory), downloaded automatically with `gdown` as a single
@@ -124,7 +126,9 @@ print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if DEVICE.type
       + f" | torch {torch.__version__}")
 
 # %% [markdown]
-# ### <a id="paths" name="paths"></a>Paths
+# <a id="paths" name="paths"></a>
+#
+# ### Paths
 #
 # Experimental results and the dataset are kept locally (`results/`, `data/`) when the notebook runs locally, and on the
 # temporary disk of the session on Colab. The stored results of the project are then downloaded with `gdown` as a single archive (about 2 MB)
@@ -172,7 +176,9 @@ if FETCH_RESULTS:
 
 
 # %% [markdown]
-# ### <a id="reproducibility" name="reproducibility"></a>Reproducibility
+# <a id="reproducibility" name="reproducibility"></a>
+#
+# ### Reproducibility
 #
 # We seed every source of randomness (initialization, data order, augmentation) and keep cuDNN deterministic, so that a
 # configuration trained twice with the same seed gives the same result. Training a configuration with different seeds
@@ -192,7 +198,9 @@ def fix_random(seed):
 fix_random(42)
 
 # %% [markdown]
-# ## <a id="configuration" name="configuration"></a>Configuration
+# <a id="configuration" name="configuration"></a>
+#
+# ## Configuration
 #
 # A base configuration holds every choice shared by all runs; each experiment changes only what it studies.
 #
@@ -279,7 +287,9 @@ TOP_K = 2  # best configurations of each network confirmed with the other seeds
 LONG_EPOCHS = 150
 
 # %% [markdown]
-# ## <a id="data" name="data"></a>Data
+# <a id="data" name="data"></a>
+#
+# ## Data
 #
 # FGVC-Aircraft (`torchvision.datasets.FGVCAircraft`, `annotation_level="variant"`) has 100 classes and 3,334 / 3,333 / 3,333 images in the training / validation / test splits: about **33 training images per class**. With so few images a network can memorize the training set long before it learns features that generalize, and this is the problem most of the following steps address.
 #
@@ -396,7 +406,9 @@ def batches(split, data, cfg, train):
 
 
 # %% [markdown]
-# ## <a id="the-network" name="the-network"></a>The network
+# <a id="the-network" name="the-network"></a>
+#
+# ## The network
 #
 # A single network class builds every network of the study from its configuration. In the figure, the components
 # added by a step of the roadmap have the colour of that step in the roadmap chart; $n_1, \dots, n_4$ are the
@@ -543,7 +555,9 @@ pd.DataFrame(rows).set_index("run").style.format({"params_M": "{:.2f}", "head_sh
 
 
 # %% [markdown]
-# ## <a id="training" name="training"></a>Training
+# <a id="training" name="training"></a>
+#
+# ## Training
 #
 # - **Loss:** cross-entropy, with label smoothing where the recipe enables it.
 # - **Weight decay**, when enabled, applies to convolution and linear weights only, not to BatchNorm parameters and
@@ -647,7 +661,9 @@ def fit(cfg, data):
 
 
 # %% [markdown]
-# ## <a id="experiment-runner-and-stored-runs" name="experiment-runner-and-stored-runs"></a>Experiment runner and stored runs
+# <a id="experiment-runner-and-stored-runs" name="experiment-runner-and-stored-runs"></a>
+#
+# ## Experiment runner and stored runs
 #
 # `run_experiment` trains one configuration (in `results/part1`, or in the directory given by `results_dir` for Part 2),
 # evaluates its best checkpoint on the test split and stores the configuration, the per-epoch curves and the test
@@ -849,7 +865,9 @@ def plot_curves(runs, title=""):
 
 
 # %% [markdown]
-# ## <a id="1-from-a-plain-vgg-to-a-residual-network-a-roadmap" name="1-from-a-plain-vgg-to-a-residual-network-a-roadmap"></a>1. From a plain VGG to a residual network: a roadmap
+# <a id="1-from-a-plain-vgg-to-a-residual-network-a-roadmap" name="1-from-a-plain-vgg-to-a-residual-network-a-roadmap"></a>
+#
+# ## 1. From a plain VGG to a residual network: a roadmap
 #
 # Each step adds one change to the previous one and is trained at three learning rates (one seed). What we expect:
 #
@@ -861,7 +879,9 @@ def plot_curves(runs, title=""):
 # - **+ a fourth stage** adds capacity and receptive field once the network is regularized.
 
 # %% [markdown]
-# ### <a id="roadmap-results" name="roadmap-results"></a>Results
+# <a id="results-of-the-roadmap" name="results-of-the-roadmap"></a>
+#
+# ### Results of the roadmap
 #
 # Each step at its best learning rate; the curves show validation accuracy (dot = best epoch), validation loss and
 # training accuracy.
@@ -883,7 +903,9 @@ if steps:
 #
 
 # %% [markdown]
-# ### <a id="sensitivity-to-the-learning-rate" name="sensitivity-to-the-learning-rate"></a>Sensitivity to the learning rate
+# <a id="sensitivity-to-the-learning-rate" name="sensitivity-to-the-learning-rate"></a>
+#
+# ### Sensitivity to the learning rate
 #
 # Best validation accuracy of every step at each learning rate.
 
@@ -904,7 +926,9 @@ if len(stored("ladder")):
 # **At this point the target accuracy for this part** (~50%) is satisfied, but since with the use of augmentation and the fourth stage the network was still improving we decided to go further and explore wheter **more depth, residual connections and a tuned training recipe** could benefit overall.
 
 # %% [markdown]
-# ## <a id="2-depth-and-residual-connections" name="2-depth-and-residual-connections"></a>2. Depth and residual connections
+# <a id="2-depth-and-residual-connections" name="2-depth-and-residual-connections"></a>
+#
+# ## 2. Depth and residual connections
 #
 # We experiment **identical plain and residual networks at increasing depth**. All six networks are the last network of the roadmap with a different number of blocks per stage, with and without skip connections:
 #
@@ -956,7 +980,9 @@ if grid_runs:
 #
 
 # %% [markdown]
-# ## <a id="3-the-training-recipe" name="3-the-training-recipe"></a>3. The training recipe
+# <a id="3-the-training-recipe" name="3-the-training-recipe"></a>
+#
+# ## 3. The training recipe
 #
 # We regularize the three best networks of the previous experiment and tune their training recipe:
 #
@@ -1037,7 +1063,9 @@ def best_tuned(name):
 
 
 # %% [markdown]
-# ### <a id="step-1--learning-rate-and-weight-decay" name="step-1--learning-rate-and-weight-decay"></a>Step 1 — learning rate and weight decay
+# <a id="step-1--learning-rate-and-weight-decay" name="step-1--learning-rate-and-weight-decay"></a>
+#
+# ### Step 1 — learning rate and weight decay
 #
 # Best validation accuracy of every point of the grid (seed 42), one panel per network; the ring marks the best point.
 
@@ -1070,7 +1098,9 @@ if tuned and len(stored("recipe")):
 # The residual networks, which fit their training set more easily, need the stronger regularization. With strong weight decay, a learning rate of 0.05 is better than 0.1.
 
 # %% [markdown]
-# ### <a id="step-2--random-search" name="step-2--random-search"></a>Step 2 — random search
+# <a id="step-2--random-search" name="step-2--random-search"></a>
+#
+# ### Step 2 — random search
 #
 # Every configuration on every network (seed 42), sorted by the mean over the networks; in the plot every configuration is a
 # line through its parameter values, ending at its mean accuracy over the three networks (dark blue: the best configuration, light blue: the second best).
@@ -1133,7 +1163,9 @@ if len(search):
 # appears in the best configurations, no dropout in the two best. These are tendencies from single-seed runs. The next step confirms the best configurations with more seeds
 
 # %% [markdown]
-# ### <a id="step-3--confirmation-with-seeds" name="step-3--confirmation-with-seeds"></a>Step 3 — confirmation with seeds
+# <a id="step-3--confirmation-with-seeds" name="step-3--confirmation-with-seeds"></a>
+#
+# ### Step 3 — confirmation with seeds
 #
 # The two best configurations of each network, mean ± standard deviation over three seeds.
 
@@ -1166,7 +1198,9 @@ if tuned:
 # Selecting now would compare networks that have not finished training, so we first train them longer.
 
 # %% [markdown]
-# ## <a id="4-longer-training-and-the-final-model" name="4-longer-training-and-the-final-model"></a>4. Longer training and the final model
+# <a id="4-longer-training-and-the-final-model" name="4-longer-training-and-the-final-model"></a>
+#
+# ## 4. Longer training and the final model
 #
 # We train the three tuned networks again for **150 epochs**, each with its best configuration and no other change,
 # with three seeds each. The one-cycle schedule is defined in fractions of the training, so it stretches with the number
@@ -1242,7 +1276,9 @@ if by_net:
 # connections, with a tuned training recipe.
 
 # %% [markdown]
-# ## <a id="5-ablation-of-the-final-model" name="5-ablation-of-the-final-model"></a>5. Ablation of the final model
+# <a id="5-ablation-of-the-final-model" name="5-ablation-of-the-final-model"></a>
+#
+# ## 5. Ablation of the final model
 #
 # The roadmap and the depth experiment added components one at a time to a plain network. To prove that every
 # design choice of the **final model** contributes to its accuracy, we now do the converse: starting from the final
@@ -1403,7 +1439,9 @@ if ablation is not None:
     plt.tight_layout(); plt.show()
 
 # %% [markdown]
-# ## <a id="conclusions" name="conclusions"></a>Conclusions
+# <a id="conclusions" name="conclusions"></a>
+#
+# ## Conclusions
 #
 # On a dataset this small, the main obstacle is not designing a powerful network but stopping it from memorizing
 # 33 images per class. Most of our gains came from controlling that: global average pooling, augmentation and weight
