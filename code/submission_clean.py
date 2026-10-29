@@ -125,6 +125,8 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.ba
 TRAIN = False  # True: run the training cells (final models of Part 1, 2A and 2B)
 TRAIN_ABLATION = False  # True: with TRAIN, also the ablation of Part 1 (36 runs)
 RETRAIN = False  # True: with TRAIN, train the runs again even if they are stored, writing over them
+INFERENCE = False #True: if TRAIN is false, downloads the best model from gdown and evaluates the test set using it,
+                    #if TRAIN is true, uses the final model just trained to evaluate the test set.
 print(f"device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if DEVICE.type == "cuda" else "")
       + f" | torch {torch.__version__}")
 
@@ -1274,6 +1276,42 @@ if by_net:
 # connections, with a tuned training recipe.
 
 # %% [markdown]
+# ### OPTIONAL - Test-set inference with the best Part 1 model
+#
+# Loads `res_3461_best_s42.pt` from the results folder (when `TRAIN=False`) or evaluates
+# the final model just trained (when `TRAIN=True`).
+
+# %%
+# Inference on the test set with the best Part 1 model (res_3461, seed 42)
+# TRAIN=False  → load pre-trained weights from the results folder
+# TRAIN=True   → train the final model from scratch and evaluate it
+if INFERENCE:
+    _P1_CFG = {
+        "img_size": 224, "augment": True, "crop_scale": [0.5, 1.0],
+        "stem": [32, 32, 64], "channels": [64, 128, 256, 512], "blocks": [3, 4, 6, 1],
+        "batchnorm": True, "gap": True, "residual": True, "dropout": 0.0,
+        "epochs": 150, "batch_size": 64, "lr": 0.05, "momentum": 0.9,
+        "weight_decay": 0.005, "label_smoothing": 0.2, "random_erasing": 0.25,
+        "warmup_epochs": 3, "schedule": "onecycle", "seed": 42,
+    }
+    _P1_WEIGHTS = RESULTS_DIR / "res_3461_best_s42.pt"
+
+    if TRAIN:
+        _p1_data = get_data(_P1_CFG["img_size"])
+        _p1_model = final_model_part_1
+    else:
+        _P1_CFG_full = {**BASE, **_P1_CFG}
+        _p1_model = build_model(_P1_CFG_full, N_CLASSES).to(DEVICE)
+        _p1_model.load_state_dict(torch.load(_P1_WEIGHTS, map_location=DEVICE))
+        _p1_data = get_data(_P1_CFG["img_size"])
+
+    _p1_model.eval()
+    _, _p1_test_acc = evaluate(_p1_model, _p1_data["test"], _p1_data, {**BASE, **_P1_CFG})
+    print(f"Part 1 best model (res_3461, seed 42) — test accuracy: {_p1_test_acc:.4f} ({100*_p1_test_acc:.2f}%)")
+else:
+    print("Skipped inference on test set.")
+
+# %% [markdown]
 # <a id="5-ablation-of-the-final-model" name="5-ablation-of-the-final-model"></a>
 #
 # ## 5. Ablation of the final model
@@ -1452,40 +1490,6 @@ if ablation is not None:
 # Finally, not every choice of the search turned out to matter: the ablation shows that some components selected
 # at 70 epochs bring no measurable benefit in the final model, while BatchNorm, which we added first, is the one the
 # network cannot do without.
-
-# %% [markdown]
-# ### Test-set inference with the best Part 1 model
-#
-# Loads `res_3461_best_s42.pt` from the results folder (when `TRAIN=False`) or trains and evaluates
-# the final model on-the-fly (when `TRAIN=True`).
-
-# %%
-# Inference on the test set with the best Part 1 model (res_3461, seed 42)
-# TRAIN=False  → load pre-trained weights from the results folder
-# TRAIN=True   → train the final model from scratch and evaluate it
-
-_P1_CFG = {
-    "img_size": 224, "augment": True, "crop_scale": [0.5, 1.0],
-    "stem": [32, 32, 64], "channels": [64, 128, 256, 512], "blocks": [3, 4, 6, 1],
-    "batchnorm": True, "gap": True, "residual": True, "dropout": 0.0,
-    "epochs": 150, "batch_size": 64, "lr": 0.05, "momentum": 0.9,
-    "weight_decay": 0.005, "label_smoothing": 0.2, "random_erasing": 0.25,
-    "warmup_epochs": 3, "schedule": "onecycle", "seed": 42,
-}
-_P1_WEIGHTS = RESULTS_DIR / "res_3461_best_s42.pt"
-
-if TRAIN:
-    _p1_data = get_data(_P1_CFG["img_size"])
-    _p1_model = final_model_part_1
-else:
-    _P1_CFG_full = {**BASE, **_P1_CFG}
-    _p1_model = build_model(_P1_CFG_full, N_CLASSES).to(DEVICE)
-    _p1_model.load_state_dict(torch.load(_P1_WEIGHTS, map_location=DEVICE))
-    _p1_data = get_data(_P1_CFG["img_size"])
-
-_p1_model.eval()
-_, _p1_test_acc = evaluate(_p1_model, _p1_data["test"], _p1_data, {**BASE, **_P1_CFG})
-print(f"Part 1 best model (res_3461, seed 42) — test accuracy: {_p1_test_acc:.4f} ({100*_p1_test_acc:.2f}%)")
 
 # %% [markdown]
 # # Part 2: fine-tune a pretrained ResNet-18
@@ -1845,6 +1849,35 @@ else:
 #
 
 # %% [markdown]
+# ### Test-set inference with the best Part 2B model
+#
+# Loads `resnet18_2B_best_s42.pt` from the results folder (when `TRAIN=False`) or trains and evaluates
+# the final 2B model on-the-fly (when `TRAIN=True`).
+
+# %%
+if INFERENCE:
+    # Inference on the test set with the best Part 2B model (resnet18_2B_best_s42, seed 42)
+    # TRAIN=False  → load pre-trained weights from the results folder
+    # TRAIN=True   → train the final 2B model from scratch and evaluate it
+
+    _P2B_WEIGHTS = RESULTS_DIR_2B / "resnet18_2B_best_s42.pt"
+    _P2B_CFG = {**FINAL_2B, "seed": 42}
+
+    if TRAIN:
+        _p2b_data = get_data(_P2B_CFG["img_size"], imagenet_stats=True)
+        _p2b_model = final_model_part_2B
+    else:
+        _p2b_model = build_model({**BASE, **_P2B_CFG}, N_CLASSES).to(DEVICE)
+        _p2b_model.load_state_dict(torch.load(_P2B_WEIGHTS, map_location=DEVICE))
+        _p2b_data = get_data(_P2B_CFG["img_size"], imagenet_stats=True)
+
+    _p2b_model.eval()
+    _, _p2b_test_acc = evaluate(_p2b_model, _p2b_data["test"], _p2b_data, {**BASE, **_P2B_CFG})
+    print(f"Part 2B best model (resnet18_2B_best_s42) — test accuracy: {_p2b_test_acc:.4f} ({100*_p2b_test_acc:.2f}%)")
+else:
+    print("Inference on the test set skipped")
+
+# %% [markdown]
 # ### Comparison with Part 1 and 2A
 #
 # Mean ± standard deviation over the three seeds: our final network of Part 1 trained from scratch (150 epochs), the
@@ -1894,29 +1927,3 @@ if final_groups:
 # trained from scratch reaches in 150. With the same budget and resolution the advantage shrinks to a few points, and
 # the gap between the two parts comes as much from how the pretrained network is trained as from the pretraining
 # itself.
-
-# %% [markdown]
-# ### Test-set inference with the best Part 2B model
-#
-# Loads `resnet18_2B_best_s42.pt` from the results folder (when `TRAIN=False`) or trains and evaluates
-# the final 2B model on-the-fly (when `TRAIN=True`).
-
-# %%
-# Inference on the test set with the best Part 2B model (resnet18_2B_best_s42, seed 42)
-# TRAIN=False  → load pre-trained weights from the results folder
-# TRAIN=True   → train the final 2B model from scratch and evaluate it
-
-_P2B_WEIGHTS = RESULTS_DIR_2B / "resnet18_2B_best_s42.pt"
-_P2B_CFG = {**FINAL_2B, "seed": 42}
-
-if TRAIN:
-    _p2b_data = get_data(_P2B_CFG["img_size"], imagenet_stats=True)
-    _p2b_model = final_model_part_2B
-else:
-    _p2b_model = build_model({**BASE, **_P2B_CFG}, N_CLASSES).to(DEVICE)
-    _p2b_model.load_state_dict(torch.load(_P2B_WEIGHTS, map_location=DEVICE))
-    _p2b_data = get_data(_P2B_CFG["img_size"], imagenet_stats=True)
-
-_p2b_model.eval()
-_, _p2b_test_acc = evaluate(_p2b_model, _p2b_data["test"], _p2b_data, {**BASE, **_P2B_CFG})
-print(f"Part 2B best model (resnet18_2B_best_s42) — test accuracy: {_p2b_test_acc:.4f} ({100*_p2b_test_acc:.2f}%)")
