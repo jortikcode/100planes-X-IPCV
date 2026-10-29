@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.5
+#       jupytext_version: 1.19.6
 #   kernelspec:
 #     display_name: ipcv_task2
 #     language: python
@@ -691,7 +691,7 @@ def run_experiment(name, group, results_dir=None, **overrides):
         # same configuration (tuples stored as lists; the stored runs of 2B do not have the key "pretrained")
         if run["config"] == {k: v for k, v in json.loads(json.dumps(cfg)).items()
                              if k != "pretrained" or "pretrained" in run["config"]}:
-            return run
+            return {**run, "model": None}  # stored runs keep no weights
         print(f"{group}/{name}: the configuration changed since the stored run, training")
 
     print(f"### {group}/{name}")
@@ -711,10 +711,10 @@ def run_experiment(name, group, results_dir=None, **overrides):
         test_acc=test_acc, test_loss=test_loss, test_pred=test_pred, test_true=data["test"].y.tolist(),
         params=count_params(model), minutes=(time.time() - t0) / 60, diverged=diverged,
         device=torch.cuda.get_device_name() if DEVICE.type == "cuda" else str(DEVICE),
-        model = model
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(run))
+    run["model"] = model  # returned to the caller, not stored in the JSON
     _RUNS = None  # the table of the stored runs is read again on its next use
     print(f"{name}: best val {run['best_val_acc']:.3f} (epoch {best_epoch}) | test {test_acc:.3f}")
     return run
